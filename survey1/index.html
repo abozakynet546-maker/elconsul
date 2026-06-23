@@ -8,6 +8,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://unpkg.com/shp-write@latest/dist/shp-write.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         html, body { height: 100%; overflow: hidden; }
@@ -32,7 +33,7 @@
         .card h3 { margin-bottom: 12px; color: #1a3a5c; border-bottom: 2px solid #e0e7ef; padding-bottom: 8px; font-size: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; }
         
         /* Map */
-        #map { flex: 1 1 auto; min-height: 0; border-radius: 10px; background: #e8f0fe; border: 2px solid #d5e2f0; min-height: 400px; aspect-ratio: 1 / 1; }
+        #map { position: relative; flex: 1 1 auto; min-height: 0; border-radius: 10px; background: #e8f0fe; border: 2px solid #d5e2f0; min-height: 400px; aspect-ratio: 1 / 1; }
         #mapLoading { text-align: center; padding: 180px 20px; color: #666; font-size: 16px; }
         
         /* Upload Zone - مميز وملون */
@@ -122,7 +123,11 @@
             padding: 8px 0;
             border-top: 1px solid #e0e7ef;
             margin-top: 8px;
+            justify-content: flex-start;
         }
+        .action-bar .btn { min-width: 140px; display: inline-flex; align-items:center; justify-content:center; gap:6px; }
+        .btn-wide { min-width: 140px; }
+        .controls-row { display:flex; gap:8px; align-items:center; justify-content:flex-start; flex-wrap:wrap; }
         .action-bar .btn { font-size: 12px; padding: 6px 14px; }
         
         /* Filters - صف أفقي واحد */
@@ -199,6 +204,17 @@
         .modal-content { background: white; padding: 25px; border-radius: 12px; max-width: 750px; width: 95%; max-height: 85vh; overflow-y: auto; }
         .modal-close { float: left; cursor: pointer; font-size: 22px; color: #999; }
         .modal-close:hover { color: #333; }
+
+        /* Upload Mode Selector Styling */
+        .upload-mode-panel { display:flex; gap:12px; align-items:stretch; margin-top:10px; }
+        .upload-mode-option { flex:1; background: linear-gradient(180deg,#ffffff,#f7fbff); border:1px solid #e6eef9; border-radius:10px; padding:12px; cursor:pointer; display:flex; gap:10px; align-items:flex-start; transition:transform .14s ease, box-shadow .14s ease; }
+        .upload-mode-option:hover { transform:translateY(-3px); box-shadow:0 8px 20px rgba(26,58,92,0.08); }
+        .upload-mode-option input[type="radio"] { appearance:none; -webkit-appearance:none; width:18px; height:18px; border-radius:50%; border:2px solid #cfdff4; margin-top:4px; position:relative; flex:0 0 22px; }
+        .upload-mode-option input[type="radio"]:checked { background: radial-gradient(circle at center, #1a73e8 45%, transparent 46%); border-color:#1a73e8; }
+        .upload-mode-option .option-body { display:flex; flex-direction:column; gap:6px; }
+        .upload-mode-option .option-title { font-weight:800; color:#17324d; font-size:15px; }
+        .upload-mode-option .option-desc { color:#546e86; font-size:13px; line-height:1.3; }
+        .upload-mode-option .option-meta { font-size:12px; color:#8597ad; }
         
         .progress-bar { width: 100%; height: 18px; background: #ddd; border-radius: 10px; overflow: hidden; margin: 8px 0; }
         .progress-fill { height: 100%; background: #4CAF50; transition: width 0.5s; width: 0%; }
@@ -216,6 +232,25 @@
         .save-option input { flex: 1; min-width: 150px; padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; }
         
         @media (max-width: 768px) { .grid-2 { grid-template-columns: 1fr; } }
+        /* Elevation badge - fixed square shown over the map and included in snapshots */
+        .elevation-badge {
+            position: absolute;
+            transform: translate(-50%, -130%); /* center above marker */
+            background: #1e88e5;
+            color: #fff;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            font-weight: 800;
+            font-size: 28px;
+            padding: 6px 14px;
+            z-index: 2000;
+            box-shadow: 0 6px 18px rgba(30,136,229,0.28);
+            pointer-events: none;
+            direction: rtl;
+            white-space: nowrap;
+        }
     </style>
 </head>
 <body>
@@ -231,6 +266,9 @@
                 <span>🏢 المراكز: <strong id="totalCenters">0</strong></span>
                 <span>📁 الحالة: <strong id="dataStatus">محملة</strong></span>
             </div>
+            <div style="display:flex;align-items:center;gap:8px;margin-inline-start:12px;">
+                <button class="btn btn-info" onclick="openConfig()">⚙️ الشرائح</button>
+            </div>
         </div>
     </div>
 
@@ -242,41 +280,44 @@
             <div class="upload-zone" onclick="document.getElementById('fileInput').click()">
                 <p><span>📂</span> اضغط لرفع ملف إكسل</p>
                 <small>يدعم .xlsx, .xls - يتجاهل الصف الأول التلقائي</small>
-                <input type="file" id="fileInput" accept=".xlsx,.xls" onchange="handleFile(event)">
+                <input type="file" id="fileInput" accept=".xlsx,.xls">
             </div>
             
             <!-- Action Bar - الأزرار أسفل الفلاتر -->
             <div class="action-bar">
-                <button class="btn btn-danger" onclick="clearAll()">🗑️ مسح الكل</button>
-                <button class="btn btn-calculate" onclick="recalculateAll()">💳 حساب المستحق</button>
-                <button class="btn btn-info" onclick="openConfig()">⚙️ الشرائح</button>
-                <button class="btn btn-warning" onclick="exportExcel()">📊 تصدير إكسل</button>
-                <button class="btn btn-satellite" onclick="extractSatelliteImages()">🛰️ استخراج الصور</button>
-                <button class="btn btn-earth" onclick="openGoogleEarthAll()">🌍 Google Earth</button>
-                <button class="btn btn-danger btn-sm" onclick="deleteSelectedOrders()">🗑️ حذف المحدد</button>
-                <button class="btn btn-satellite btn-sm" onclick="extractSelectedSatelliteImages()">🛰️ صور المحدد</button>
+                <!-- Output buttons row -->
+                <button class="btn btn-warning btn-wide" onclick="exportExcel()">📊 تصدير إكسل</button>
+                <button class="btn btn-satellite btn-wide" onclick="extractSatelliteImages()">🛰️ استخراج الصور</button>
+                <button class="btn btn-satellite btn-wide btn-sm" onclick="extractSelectedSatelliteImages()">🛰️ صور المحدد</button>
+                <button class="btn btn-primary btn-wide" onclick="exportShapefile()">📦 استخراج Shapefile</button>
+                <button class="btn btn-earth btn-wide" onclick="openGoogleEarthAll()">🌍 Google Earth</button>
+                <button class="btn btn-info btn-wide" onclick="uploadBoundary()">⬛ رفع حدود الحيز</button>
+                <button class="btn btn-info btn-wide" onclick="document.getElementById('fileInput').click()">📂 رفع إكسل</button>
+                <button class="btn btn-danger btn-wide btn-sm" onclick="deleteSelectedOrders()">🗑️ حذف المحدد</button>
                 <span id="selectedCountBadge" class="badge badge-info">0 محدد</span>
             </div>
+            <input type="file" id="boundaryInput" accept=".geojson,.json,.kml" style="display:none;" onchange="handleBoundaryFile(event)">
             <div class="filters-row">
                 <select id="filterCenter" onchange="applyFilters()">
                     <option value="all">🏢 جميع المراكز</option>
                 </select>
-                <select id="filterType" onchange="applyFilters()">
-                    <option value="all">جميع الأنواع</option>
-                    <option value="نشاط">🏪 نشاط</option>
-                    <option value="صلاحية موقع">📍 صلاحية موقع</option>
-                </select>
+                <!-- filterType removed as per user request -->
                 <select id="highlightFilter" onchange="applyFilters()">
                     <option value="all">📋 الكل</option>
                     <option value="none">✅ عادي</option>
                     <option value="tier-change">🔁 انتقل شريحة</option>
                     <option value="fee-diff">💰 فرق رسوم</option>
                     <option value="area-diff">📐 فرق مساحة</option>
+                    <option value="mismatch">🚫 مخالف للحيز</option>
                 </select>
                 <div class="search-group">
                     <input type="text" id="searchInput" placeholder="🔎 بحث (رقم/مالك)...">
                     <button class="btn btn-primary" onclick="applyFilters()">بحث</button>
                     <button class="btn btn-secondary" onclick="clearSearch()">مسح</button>
+                </div>
+                <div class="controls-row" style="margin-inline-start:auto;">
+                    <button class="btn btn-calculate" onclick="recalculateAll()">🔄 تحديث البيانات</button>
+                    <button class="btn btn-danger" onclick="clearAll()">🗑️ مسح الكل</button>
                 </div>
             </div>
         </div>
@@ -288,13 +329,14 @@
             <div class="api-key-box">
                 <label>🔑 مفتاح API:</label>
                 <label class="file-label" for="apiKeyFile">📂 رفع ملف .txt</label>
-                <input type="file" id="apiKeyFile" accept=".txt" onchange="handleApiKeyFile(event)">
+                <input type="file" id="apiKeyFile" accept=".txt">
                 <span id="apiStatus" class="api-status"></span>
                 <span id="fileNameDisplay" class="file-name"></span>
             </div>
             
             <div id="map">
                 <div id="mapLoading">⏳ يرجى رفع ملف المفتاح أولاً</div>
+                <div id="elevationBadge" class="elevation-badge">المنسوب: —</div>
             </div>
         </div>
     </div>
@@ -328,6 +370,39 @@
     </div>
 </div>
 
+<!-- Upload Mode Modal -->
+<div class="modal" id="uploadModeModal"><div class="modal-content"><span class="modal-close" onclick="closeUploadModeModal()">&times;</span><h3>اختيار نوع الرفع</h3><div style="direction:rtl;font-size:14px;margin-top:8px;">
+<p style="color:#23455a;font-weight:700;margin-bottom:8px;">اختر نوع البيانات الموجودة في ملف الإكسل:</p>
+<div class="upload-mode-panel">
+    <label class="upload-mode-option">
+        <input type="radio" name="uploadMode" value="survey" checked>
+        <div class="option-body">
+            <div class="option-title">رفع مساحي</div>
+            <div class="option-desc">ملف يحتوي على نقاط متعددة لكل طلب → سيتم رسم بوليجون عند وجود 3 نقاط أو أكثر.</div>
+            <div class="option-meta">مثالي لعمليات المساحة والرسم</div>
+        </div>
+    </label>
+
+    <label class="upload-mode-option">
+        <input type="radio" name="uploadMode" value="elevation">
+        <div class="option-body">
+            <div class="option-title">منسوب</div>
+            <div class="option-desc">ملف يحتوي على إحداثي واحد وعمود المنسوب → سيقوم بإنشاء نقاط ومن ثم التقاط صور ومنسوبات.</div>
+            <div class="option-meta">اختر هذا إن لديك عمود ارتفاع مستقل</div>
+        </div>
+    </label>
+</div>
+
+<div id="zColumnSelector" style="margin-top:12px;display:none;">
+        <label style="font-weight:700;color:#23455a;">اختر عمود المنسوب:</label>
+        <select id="zColumn" style="width:100%;padding:8px;margin-top:6px;border:1px solid #e0e8f4;border-radius:6px;"></select>
+        <div style="margin-top:10px;"><label style="font-weight:700;color:#23455a;">اختر عمود الحيز (0 خارج - 1 داخل):</label>
+        <select id="urbanColumn" style="width:100%;padding:8px;margin-top:6px;border:1px solid #e0e8f4;border-radius:6px;"></select></div>
+</div>
+
+<div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;"><button class="btn btn-primary" onclick="confirmUploadMode()">موافق</button><button class="btn btn-secondary" onclick="closeUploadModeModal()">إلغاء</button></div>
+</div></div></div>
+
 <!-- Modals -->
 <div class="modal" id="configModal"><div class="modal-content"><span class="modal-close" onclick="closeConfig()">&times;</span><h3>⚙️ إدارة شرائح الأسعار</h3><p style="color:#666;margin-bottom:12px;font-size:13px;">القيمة الثابتة لكل شريحة</p><div id="configTableContainer"></div><div style="margin-top:15px;display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-primary" onclick="saveConfig()">💾 حفظ</button><button class="btn btn-warning" onclick="resetConfig()">↩️ إعادة تعيين</button></div></div></div>
 <div class="modal" id="earthModal"><div class="modal-content" style="max-width:95%;height:90vh;"><span class="modal-close" onclick="closeEarthModal()">&times;</span><h3>🌍 Google Earth</h3><div id="earthContainer" style="width:100%;height:85vh;border-radius:8px;border:1px solid #ddd;"></div></div></div>
@@ -339,7 +414,8 @@
 // ============================================================
 // 1. CONFIGURATION
 // ============================================================
-let map = null, polygons = [], orders = [], mapType = 'satellite', mapInitialized = false;
+let map = null, polygons = [], markers = [], orders = [], mapType = 'satellite', mapInitialized = false;
+let currentUploadMode = 'survey';
 let currentTableOrders = [];
 let currentActiveTab = 'orders';
 let currentApiKey = '';
@@ -449,7 +525,8 @@ function isMissingNumericValue(value) {
 }
 
 function formatNumberValue(value, fallback = '—') {
-    return Number.isFinite(value) ? value.toFixed(2) : fallback;
+    if (!Number.isFinite(value)) return fallback;
+    return Number(value).toFixed(2);
 }
 
 function getOrderMissingFields(order) {
@@ -482,9 +559,18 @@ function ensureOrderAreaMetrics(order) {
     if (!order) return order;
     const hasCoords = Array.isArray(order.coords) && order.coords.length >= 3;
     const computedArea = hasCoords ? calculatePolygonAreaInSquareMeters(order.coords || []) : null;
-    if (order.drawnArea === undefined || order.areaDifference === undefined) {
-        order.drawnArea = computedArea;
-        order.areaDifference = hasCoords && Number.isFinite(order.area) && order.area > 0 ? computedArea - order.area : null;
+        if (order.drawnArea === undefined || order.areaDifference === undefined) {
+            order.drawnArea = computedArea;
+            if (hasCoords && Number.isFinite(order.area) && order.area > 0 && computedArea !== null) {
+                const diff = computedArea - order.area;
+                const absDiff = Math.abs(diff);
+                const declaredTier = getTierIndexForArea(order.area, order.typeId);
+                const drawnTier = getTierIndexForArea(computedArea, order.typeId);
+                const accepted = (absDiff <= 10) || (declaredTier !== undefined && drawnTier !== undefined && declaredTier === drawnTier);
+                order.areaDifference = accepted ? 0 : diff;
+            } else {
+                order.areaDifference = null;
+            }
     }
     return order;
 }
@@ -735,6 +821,13 @@ function initMap() {
             streetViewControl: false
         });
         mapInitialized = true;
+        // attach any pending boundary polygons that were loaded before map init
+        try {
+            if (pendingBoundaryPolygons && pendingBoundaryPolygons.length) {
+                pendingBoundaryPolygons.forEach(p => { try { p.setMap(map); } catch(e){} });
+                pendingBoundaryPolygons = [];
+            }
+        } catch(e){}
         document.getElementById('mapLoading').style.display = 'none';
         if (orders && orders.length > 0) renderMap();
         if (window.initMapCallback) { window.initMapCallback(); window.initMapCallback = null; }
@@ -781,7 +874,10 @@ function handleFile(event) {
                 return obj;
             }).filter(row => Object.values(row).some(v => v !== ''));
             if (!json || json.length === 0) { alert('⚠️ لا توجد بيانات'); return; }
-            processOrders(json);
+            // حفظ مؤقت وعرض خيار نوع الرفع (مساحي أو منسوب)
+            window._parsedExcelRows = json;
+            window._parsedHeaderRow = headerRow;
+            showUploadModeModal(headerRow, json);
             document.getElementById('dataStatus').textContent = `✅ ${json.length} طلب`;
             document.getElementById('dataStatus').style.color = 'green';
         } catch (err) { alert('❌ خطأ: ' + err.message); console.error(err); }
@@ -994,9 +1090,19 @@ function processOrders(data) {
         const hasCoords = coords && coords.length >= 3;
         const due = hasArea ? calculateDue(area, typeId) : null;
         const remaining = hasArea && hasPaid && Number.isFinite(due) ? due - paid : null;
-        const status = !hasArea || !hasPaid || !hasCoords ? 'بيانات ناقصة' : (remaining <= 0 ? 'مكتمل' : (remaining > 0 && remaining < due * 0.5 ? 'متبقي' : 'غير مستوفى'));
+        // Simplified status: 'مستوفى الرسوم' or 'غير مستوفى الرسوم' (based only on declared area and payments)
+        const status = (hasArea && hasPaid && Number.isFinite(due) && remaining <= 0) ? 'مستوفى الرسوم' : 'غير مستوفى الرسوم';
         const drawnArea = hasCoords ? calculatePolygonAreaInSquareMeters(coords) : null;
-        const areaDifference = hasArea && hasCoords ? drawnArea - area : null;
+        // compute area difference with tolerance: consider differences <= 10 m² acceptable
+        let areaDifference = null;
+        if (hasArea && hasCoords && drawnArea !== null) {
+            const diff = drawnArea - area;
+            const absDiff = Math.abs(diff);
+            const declaredTier = getTierIndexForArea(area, typeId);
+            const drawnTier = getTierIndexForArea(drawnArea, typeId);
+            const accepted = (absDiff <= 10) || (declaredTier !== undefined && drawnTier !== undefined && declaredTier === drawnTier);
+            areaDifference = accepted ? 0 : diff;
+        }
         
         // ============================================
         // 6. إرجاع كائن الطلب
@@ -1044,13 +1150,17 @@ function recalculateAll() {
         const computedArea = hasCoords ? calculatePolygonAreaInSquareMeters(order.coords || []) : null;
         order.due = newDue;
         order.drawnArea = computedArea;
-        order.areaDifference = hasArea && hasCoords ? computedArea - order.area : null;
+        // only consider areaDifference when computed area is greater or equal to declared area
+        order.areaDifference = hasArea && hasCoords && computedArea !== null && computedArea >= order.area ? computedArea - order.area : null;
         order.remaining = hasArea && hasPaid && Number.isFinite(order.due) ? order.due - order.paid : null;
-        order.status = !hasArea || !hasPaid || !hasCoords ? 'بيانات ناقصة' : (order.remaining <= 0 ? 'مكتمل' : (order.remaining > 0 && order.remaining < order.due * 0.5 ? 'متبقي' : 'غير مستوفى'));
+        // Simplified status: based only on declared area due vs paid
+        order.status = (hasArea && hasPaid && Number.isFinite(order.due) && order.remaining <= 0) ? 'مستوفى الرسوم' : 'غير مستوفى الرسوم';
         count++;
     });
     saveToLocalStorage(); renderAll(); updateStats();
-    alert(`✅ تم إعادة حساب ${count} طلب`);
+    // بعد إعادة الحساب، أعد مراجعة حالة الحيز إذا كانت الحدود محملة
+    try { classifyUrbanInclusion(); } catch(e) { console.warn('فشل إعادة تصنيف الحيز بعد التحديث:', e); }
+    alert(`✅ تم إعادة حساب ${count} طلب ومراجعة حالة الحيز`);
 }
 
 function updateCenterFilter() {
@@ -1076,12 +1186,15 @@ function getTierIndexForArea(area, typeId) {
 function getOrderHighlightType(order) {
     ensureOrderAreaMetrics(order);
     const missingFields = getOrderMissingFields(order);
-    if (missingFields.length) return 'none';
+    // Show fee-diff when there's an outstanding remaining amount regardless of missing geometry
+    if ((order.remaining || 0) > 0.01) return 'fee-diff';
     const originalTier = getTierIndexForArea(order.area || 0, order.typeId);
     const drawnTier = getTierIndexForArea(order.drawnArea || 0, order.typeId);
-    if (originalTier !== -1 && drawnTier !== -1 && originalTier !== drawnTier) return 'tier-change';
-    if ((order.remaining || 0) > 0.01) return 'fee-diff';
+    // mark tier-change only when drawn area is greater than declared and causes a higher tier
+    if (Number.isFinite(order.drawnArea) && Number.isFinite(order.area) && order.drawnArea > order.area && drawnTier !== -1 && originalTier !== -1 && drawnTier > originalTier) return 'tier-change';
     if (Math.abs(order.areaDifference || 0) > 10) return 'area-diff';
+    // If essential fields are missing, mark as none (no special highlight)
+    if (missingFields.length) return 'none';
     return 'none';
 }
 
@@ -1091,10 +1204,7 @@ function getOrderResponseState(order) {
     const missingFields = getOrderMissingFields(order);
 
     if (missingFields.length) {
-        return {
-            hasIssue: true,
-            text: `يوجد بيانات أساسية غير مكتملة: ${missingFields.join(', ')}`
-        };
+        messages.push(`يوجد بيانات أساسية غير مكتملة: ${missingFields.join(', ')}`);
     }
 
     const originalTier = getTierIndexForArea(order.area || 0, order.typeId);
@@ -1106,8 +1216,9 @@ function getOrderResponseState(order) {
         messages.push('الإحداثيات غير مطابقة للأطوال والمساحة');
     }
 
+    // Always report fee diff when there's an outstanding remaining amount (based on declared area/due)
     if ((order.remaining || 0) > 0.01) {
-        messages.push(`يوجد فرق قيمة السداد بمبلغ ${Math.abs(order.remaining).toFixed(2)} ج.م`);
+        messages.push(`يوجد فرق قيمة السداد بمبلغ ${formatNumberValue(Math.abs(order.remaining))} ج.م`);
     }
 
     return {
@@ -1138,7 +1249,7 @@ function buildOrderRowHtml(order) {
     const typeClass = order.typeCategory === 'نشاط' ? 'type-badge activity' : 'type-badge location';
     const missingFields = getOrderMissingFields(order);
     const areaDiff = Number.isFinite(order.areaDifference) ? order.areaDifference : 0;
-    const diffText = areaDiff >= 0 ? `+${areaDiff.toFixed(2)}` : `${areaDiff.toFixed(2)}`;
+    const diffText = areaDiff >= 0 ? `+${formatNumberValue(areaDiff)}` : `${formatNumberValue(areaDiff)}`;
     const diffColor = areaDiff >= 0 ? '#d32f2f' : '#c62828';
     const highlightType = getOrderHighlightType(order);
     let rowClass = '';
@@ -1161,10 +1272,10 @@ function buildOrderRowHtml(order) {
     const dueText = formatNumberValue(order.due, '—');
     const remainingText = formatNumberValue(order.remaining, '—');
     const remainingColor = missingFields.length ? '#999' : (order.remaining > 0 ? '#f44336' : '#4CAF50');
-    const statusText = order.status || 'بيانات ناقصة';
-    const statusClass = statusText === 'مكتمل' ? 'badge-success' : statusText === 'متبقي' ? 'badge-warning' : statusText === 'بيانات ناقصة' ? 'badge-secondary' : 'badge-danger';
+    const statusText = order.status || 'غير مستوفى الرسوم';
+    const statusClass = statusText === 'مستوفى الرسوم' ? 'badge-success' : 'badge-danger';
     const diffDisplay = Number.isFinite(order.areaDifference) ? `${diffText}${badgeText ? `<span class="highlight-badge">${badgeText}</span>` : ''}` : '—';
-    return `<tr class="${rowClass}">
+    return `<tr class="${rowClass}" onclick="zoomToOrder('${order.id}')">
         <td class="checkbox-cell"><input type="checkbox" ${checked} onchange="toggleSelectedOrder('${order.id}', this.checked)"></td>
         <td><span class="clickable-id" onclick="zoomToOrder('${order.id}')">${order.id}</span></td>
         <td>${order.owner}</td>
@@ -1183,9 +1294,51 @@ function buildOrderRowHtml(order) {
 function renderOrdersTable(ordersList = orders) {
     currentTableOrders = Array.isArray(ordersList) ? ordersList : [];
     const tbody = document.getElementById('ordersBody');
-    if (!ordersList || ordersList.length === 0) { tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;color:#999;">لا توجد بيانات</td></tr>`; return; }
-    tbody.innerHTML = ordersList.map(order => buildOrderRowHtml(order)).join('');
+    const table = document.getElementById('ordersTable');
+    if (!ordersList || ordersList.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;color:#999;">لا توجد بيانات</td></tr>`;
+        return;
+    }
+
+    // If elevation upload mode, render original Excel headers and rows
+    const sampleElevation = ordersList.find(o => o && o.isElevation);
+    if (currentUploadMode === 'elevation' && sampleElevation && Array.isArray(sampleElevation.originalHeaders) && sampleElevation.originalHeaders.length) {
+        const headers = sampleElevation.originalHeaders;
+        // build dynamic thead
+        let headerHtml = `<tr><th class="checkbox-cell"><input type="checkbox" onchange="toggleSelectAllOrders(this.checked)"></th>`;
+        headers.forEach(h => { headerHtml += `<th>${h}</th>`; });
+        headerHtml += `<th>المنسوب</th><th>داخل الحيز (مستند)</th><th>داخل الحيز (حقيقي)</th><th>مخالفة</th><th>إجراءات</th></tr>`;
+        table.querySelector('thead').innerHTML = headerHtml;
+        tbody.innerHTML = ordersList.map(o => buildElevationRowHtml(o)).join('');
+    } else {
+        // default table layout
+        table.querySelector('thead').innerHTML = `<tr><th class="checkbox-cell"><input type="checkbox" onchange="toggleSelectAllOrders(this.checked)"></th><th>رقم الطلب</th><th>المالك</th><th>المركز</th><th>النوع</th><th>المساحة</th><th>المدفوع</th><th>المستحق</th><th>المتبقي</th><th>الحالة</th><th>فرق المساحة</th><th>إجراءات</th></tr>`;
+        tbody.innerHTML = ordersList.map(order => buildOrderRowHtml(order)).join('');
+    }
     updateSelectedCountBadge();
+}
+
+function buildElevationRowHtml(order) {
+    const checked = selectedOrderIds.has(order.id) ? 'checked' : '';
+    const headers = Array.isArray(order.originalHeaders) ? order.originalHeaders : [];
+    const cols = headers.map(h => {
+        const v = (order.originalRow && order.originalRow[h] !== undefined) ? order.originalRow[h] : '';
+        return `<td>${v === null || v === undefined ? '' : String(v)}</td>`;
+    }).join('');
+    const elevText = order.elevation !== undefined && order.elevation !== null ? order.elevation : '';
+    const insideText = order.insideFlag !== null && order.insideFlag !== undefined ? (order.insideFlag ? '1' : '0') : '';
+    const actualText = order.actualInside !== null && order.actualInside !== undefined ? (order.actualInside ? '1' : '0') : '';
+    const mismatch = order.classificationMismatch ? 'نعم' : 'لا';
+    const actions = `<button class="btn btn-earth btn-sm" onclick="zoomToOrder('${order.id}')">📍</button> <button class="btn btn-satellite btn-sm" onclick="captureSingleSatellite('${order.id}')">🛰️</button>`;
+    return `<tr onclick="zoomToOrder('${order.id}')">
+        <td class="checkbox-cell"><input type="checkbox" ${checked} onchange="toggleSelectedOrder('${order.id}', this.checked)"></td>
+        ${cols}
+        <td>${elevText}</td>
+        <td>${insideText}</td>
+        <td>${actualText}</td>
+        <td style="color:${order.classificationMismatch ? '#f44336' : '#4CAF50'};font-weight:bold;">${mismatch}</td>
+        <td><div class="btn-group">${actions}</div></td>
+    </tr>`;
 }
 
 function updateSelectedCountBadge() {
@@ -1227,8 +1380,8 @@ function deleteSelectedOrders() {
 function extractSelectedSatelliteImages() {
     if (!selectedOrderIds.size) { alert('⚠️ لم يتم تحديد أي طلب'); return; }
     const selectedOrders = orders.filter(order => selectedOrderIds.has(order.id));
-    const validOrders = selectedOrders.filter(o => o.coords && o.coords.length >= 3);
-    if (!validOrders.length) { alert('⚠️ لا توجد طلبات محددة بصور مناسبة'); return; }
+    const validOrders = selectedOrders.filter(o => (o.coords && o.coords.length >= 3) || (o.isElevation && o.point));
+    if (!validOrders.length) { alert('⚠️ لا توجد طلبات محددة بصور مناسبة (احتاج نقاط أو بوليجونات)'); return; }
     selectImageDestination(function(folderHandle) { startImageExtraction(validOrders, folderHandle); });
 }
 
@@ -1247,7 +1400,357 @@ function renderCentersTable() {
     orders.forEach(o => { const name = o.center || 'غير محدد'; if (!centersData[name]) centersData[name] = { count:0, totalArea:0, totalPaid:0, totalDue:0, totalRemaining:0 }; centersData[name].count++; centersData[name].totalArea += o.area; centersData[name].totalPaid += o.paid; centersData[name].totalDue += o.due; centersData[name].totalRemaining += o.remaining; });
     const entries = Object.entries(centersData);
     if (!entries.length) { tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#999;">لا توجد بيانات</td></tr>`; return; }
-    tbody.innerHTML = entries.map(([center, data]) => `<tr><td><strong>${center}</strong></td><td>${data.count}</td><td>${data.totalArea.toFixed(2)}</td><td>${data.totalPaid.toFixed(2)}</td><td>${data.totalDue.toFixed(2)}</td><td style="color:${data.totalRemaining>0?'#f44336':'#4CAF50'};font-weight:bold;">${data.totalRemaining.toFixed(2)}</td></tr>`).join('');
+    tbody.innerHTML = entries.map(([center, data]) => `<tr><td><strong>${center}</strong></td><td>${data.count}</td><td>${formatNumberValue(data.totalArea)}</td><td>${formatNumberValue(data.totalPaid)}</td><td>${formatNumberValue(data.totalDue)}</td><td style="color:${data.totalRemaining>0?'#f44336':'#4CAF50'};font-weight:bold;">${formatNumberValue(data.totalRemaining)}</td></tr>`).join('');
+}
+
+// ============================================================
+// Upload Mode Modal & Elevation processing
+// ============================================================
+function showUploadModeModal(headerRow, rows) {
+    try {
+        const modal = document.getElementById('uploadModeModal');
+        const zSelect = document.getElementById('zColumn');
+        const uSelect = document.getElementById('urbanColumn');
+        zSelect.innerHTML = '';
+        uSelect.innerHTML = '';
+        // populate possible z columns from headerRow
+        headerRow.forEach(h => { if (h && String(h).trim() !== '') zSelect.innerHTML += `<option value="${String(h).trim()}">${String(h).trim()}</option>`; });
+        headerRow.forEach(h => { if (h && String(h).trim() !== '') uSelect.innerHTML += `<option value="${String(h).trim()}">${String(h).trim()}</option>`; });
+        // show/hide selector based on radio
+        document.querySelectorAll('input[name="uploadMode"]').forEach(r => r.addEventListener('change', function() {
+            document.getElementById('zColumnSelector').style.display = this.value === 'elevation' ? 'block' : 'none';
+        }));
+        modal.style.display = 'flex';
+        // store parsed rows globally (already set in handleFile)
+    } catch (e) { console.warn(e); }
+}
+function closeUploadModeModal() { document.getElementById('uploadModeModal').style.display = 'none'; }
+function confirmUploadMode() {
+    const mode = document.querySelector('input[name="uploadMode"]:checked')?.value || 'survey';
+    const zCol = document.getElementById('zColumn')?.value;
+    const urbanCol = document.getElementById('urbanColumn')?.value;
+    const rows = window._parsedExcelRows || [];
+    closeUploadModeModal();
+    currentUploadMode = mode;
+    // hide type filter in elevation mode
+    const filterTypeEl = document.getElementById('filterType');
+    if (filterTypeEl) filterTypeEl.style.display = mode === 'elevation' ? 'none' : '';
+    if (mode === 'survey') {
+        processOrders(rows);
+    } else {
+        processElevation(rows, zCol, urbanCol);
+    }
+    updateStats(); renderAll();
+}
+
+function processElevation(data, zColumnName, urbanColumnName) {
+    if (!data || !data.length) return;
+    orders = data.map((row, index) => {
+        // try to find lat/lng in common columns
+        const latKeys = ['Lat','latitude','خط العرض','عرض','lat','LAT'];
+        const lngKeys = ['Long','longitude','خط الطول','طول','lng','LON','lon'];
+        let lat = null, lng = null;
+        for (let k of latKeys) { if (row[k] !== undefined && row[k] !== '' && !isNaN(parseFloat(row[k]))) { lat = parseFloat(row[k]); break; } }
+        for (let k of lngKeys) { if (row[k] !== undefined && row[k] !== '' && !isNaN(parseFloat(row[k]))) { lng = parseFloat(row[k]); break; } }
+        const elevationCandidates = [zColumnName, 'z', 'Z', 'الارتفاع', 'ارتفاع'];
+        let elev = null;
+        for (let k of elevationCandidates) { if (k && row[k] !== undefined && row[k] !== '' && !isNaN(parseFloat(row[k]))) { elev = parseFloat(row[k]); break; } }
+        if (!elev && zColumnName && row[zColumnName] !== undefined && row[zColumnName] !== '' && !isNaN(parseFloat(row[zColumnName]))) elev = parseFloat(row[zColumnName]);
+
+        const requestNumber = String(row['رقم الطلب'] || row['RequestNumber'] || index + 1);
+        const owner = row['اسم طالب الخدمة'] || row['OwnerName'] || 'غير محدد';
+        const center = row['المركز'] || row['Center'] || getCenterFromCode(requestNumber);
+        const rawType = row['نوع الطلب'] || row['RequestTypeID'] || '';
+        const typeId = mapRequestType(rawType);
+
+        // determine inside flag from urbanColumnName or common names
+        let insideFlag = null;
+        const urbanCandidates = [urbanColumnName, 'الحيز', 'داخل', 'in_urban', 'inside', 'داخل_الحيز', 'حيز'];
+        for (let k of urbanCandidates) {
+            if (k && row[k] !== undefined && row[k] !== '' ) {
+                const v = String(row[k]).trim();
+                if (v === '1' || v === 'نعم' || v === 'داخل') insideFlag = 1;
+                else if (v === '0' || v === 'لا' || v === 'خارج') insideFlag = 0;
+                else if (!isNaN(parseFloat(v))) insideFlag = Number(parseFloat(v)) ? 1 : 0;
+                break;
+            }
+        }
+
+        // normalize headers and build originalRow map (use trimmed header names)
+        const rawHeaders = Array.isArray(window._parsedHeaderRow) ? window._parsedHeaderRow : [];
+        const headers = rawHeaders.map(h => String(h||'').trim()).filter(h => h !== '');
+        const normalizedRow = {};
+        headers.forEach(h => { normalizedRow[h] = row[h] !== undefined ? row[h] : (row[String(h)] !== undefined ? row[String(h)] : ''); });
+
+        return {
+            id: requestNumber,
+            owner: owner,
+            center: center,
+            date: row['تاريخ الطلب'] || row['RequestDate'] || '',
+            typeId: typeId,
+            typeName: typeNames[typeId] || typeId,
+            typeCategory: typeCategories[typeId] || 'نشاط',
+            coords: null,
+            point: (lat && lng) ? { lat, lng } : null,
+            elevation: elev,
+            originalRow: normalizedRow,
+            originalHeaders: headers,
+            insideFlag: insideFlag,
+            isElevation: true,
+            area: null,
+            drawnArea: null,
+            areaDifference: null,
+            paid: cleanAreaValue(row['قيمة السداد'] || row['Budget']) || 0,
+            due: null,
+            remaining: null,
+            status: 'منسوب'
+        };
+    });
+    allCenters = [...new Set(orders.map(o => o.center))].filter(c => c && c !== 'مركز غير معروف' && c !== 'غير محدد' && c !== '');
+    updateCenterFilter(); saveToLocalStorage();
+}
+
+// ============================================================
+// Urban boundary handling & classification
+// ============================================================
+let urbanBoundaries = [];
+let urbanBoundaryPolygons = [];
+let pendingBoundaryPolygons = [];
+let floatingBadgeOverlay = null;
+
+function uploadBoundary() { document.getElementById('boundaryInput').click(); }
+function handleBoundaryFile(event) {
+    const file = event.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const content = e.target.result;
+            // decide by extension: try KML first if file name ends with .kml, else try GeoJSON
+            const name = (file.name || '').toLowerCase();
+            // clear existing
+            urbanBoundaries = []; urbanBoundaryPolygons.forEach(p => p.setMap(null)); urbanBoundaryPolygons = [];
+            if (name.endsWith('.kml')) {
+                // try to extract <coordinates> blocks directly from raw content (handles escaped/odd KML)
+                let found = 0;
+                try {
+                    const coordBlockRegex = /<coordinates[^>]*>([\s\S]*?)<\/coordinates>/gi;
+                    let match;
+                    while ((match = coordBlockRegex.exec(content)) !== null) {
+                        const coordsText = (match[1] || '').trim();
+                        if (!coordsText) continue;
+                        const rings = coordsText.split(/\s+/);
+                        const path = rings.map(r => {
+                            const parts = r.split(',');
+                            return { lat: parseFloat(parts[1]), lng: parseFloat(parts[0]) };
+                        }).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+                        if (path.length >= 3) {
+                            const gpoly = new google.maps.Polygon({ paths: path, strokeColor: '#6a1b9a', strokeOpacity: 0.8, strokeWeight: 2, fillColor: '#6a1b9a', fillOpacity: 0.15 });
+                            if (mapInitialized && map) gpoly.setMap(map);
+                            urbanBoundaryPolygons.push(gpoly); urbanBoundaries.push(gpoly);
+                            if (!mapInitialized) pendingBoundaryPolygons.push(gpoly);
+                            found++;
+                        }
+                    }
+                } catch (e) { console.warn('خطأ عند استخراج كتل الاحداثيات من النص الخام:', e); }
+
+                // fallback: consider HTML-escaped coordinates like &lt;coordinates&gt;...&lt;/coordinates&gt;
+                if (found === 0) {
+                    try {
+                        const escapedRegex = /&lt;coordinates[^&]*&gt;([\s\S]*?)&lt;\/coordinates&gt;/gi;
+                        let m;
+                        while ((m = escapedRegex.exec(content)) !== null) {
+                            const coordsText = (m[1] || '').replace(/&amp;/g, '&').trim();
+                            if (!coordsText) continue;
+                            const rings = coordsText.split(/\s+/);
+                            const path = rings.map(r => {
+                                const parts = r.split(',');
+                                return { lat: parseFloat(parts[1]), lng: parseFloat(parts[0]) };
+                            }).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+                            if (path.length >= 3) {
+                                const gpoly = new google.maps.Polygon({ paths: path, strokeColor: '#6a1b9a', strokeOpacity: 0.8, strokeWeight: 2, fillColor: '#6a1b9a', fillOpacity: 0.15 });
+                                if (mapInitialized && map) gpoly.setMap(map);
+                                urbanBoundaryPolygons.push(gpoly); urbanBoundaries.push(gpoly);
+                                if (!mapInitialized) pendingBoundaryPolygons.push(gpoly);
+                                found++;
+                            }
+                        }
+                    } catch (e) { console.warn('خطأ في استخراج النسخة الهروبية من الاحداثيات:', e); }
+                }
+
+                // final fallback: try XML parsing if still nothing
+                if (found === 0) {
+                    try {
+                        const parser = new DOMParser();
+                        const xml = parser.parseFromString(content, 'application/xml');
+                        const polyNodes = (xml.getElementsByTagNameNS && typeof xml.getElementsByTagNameNS === 'function') ?
+                            Array.from(xml.getElementsByTagNameNS('*', 'Polygon')) : Array.from(xml.getElementsByTagName('Polygon'));
+                        polyNodes.forEach(poly => {
+                            const coordNodes = (poly.getElementsByTagNameNS && typeof poly.getElementsByTagNameNS === 'function') ?
+                                Array.from(poly.getElementsByTagNameNS('*', 'coordinates')) : Array.from(poly.getElementsByTagName('coordinates'));
+                            coordNodes.forEach(cn => {
+                                const coordsText = (cn.textContent || '').trim();
+                                if (!coordsText) return;
+                                const rings = coordsText.split(/\s+/);
+                                const path = rings.map(r => {
+                                    const parts = r.split(',');
+                                    return { lat: parseFloat(parts[1]), lng: parseFloat(parts[0]) };
+                                }).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+                                if (path.length >= 3) {
+                                    const gpoly = new google.maps.Polygon({ paths: path, strokeColor: '#6a1b9a', strokeOpacity: 0.8, strokeWeight: 2, fillColor: '#6a1b9a', fillOpacity: 0.15 });
+                                    if (mapInitialized && map) gpoly.setMap(map);
+                                    urbanBoundaryPolygons.push(gpoly); urbanBoundaries.push(gpoly);
+                                    if (!mapInitialized) pendingBoundaryPolygons.push(gpoly);
+                                    found++;
+                                }
+                            });
+                        });
+                    } catch (e) { console.warn('فشل التحليل كـ XML:', e); }
+                }
+
+                console.log('KML polygons found (regex/xml):', found);
+                if (!found) { alert('⚠️ لم يتم إيجاد بوليجونات داخل ملف KML'); }
+                else { alert(`✅ تم تحميل ملف KML كحدود الحيز (${found} منطقة)`); classifyUrbanInclusion(); }
+                try { document.getElementById('boundaryInput').value = ''; } catch(e){}
+            } else {
+                const geo = JSON.parse(content);
+                if (!geo || !geo.features) { alert('⚠️ الملف ليس GeoJSON صالح'); return; }
+                geo.features.forEach(f => {
+                    if (!f.geometry) return;
+                    if (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon') {
+                        const coordsSets = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
+                        coordsSets.forEach(coordsArr => {
+                            const paths = coordsArr[0].map(c => ({ lat: c[1], lng: c[0] }));
+                            const poly = new google.maps.Polygon({ paths, strokeColor: '#6a1b9a', strokeOpacity: 0.8, strokeWeight: 2, fillColor: '#6a1b9a', fillOpacity: 0.15 });
+                            if (mapInitialized && map) poly.setMap(map);
+                            urbanBoundaryPolygons.push(poly); urbanBoundaries.push(poly);
+                            if (!mapInitialized) pendingBoundaryPolygons.push(poly);
+                        });
+                    }
+                });
+                if (!urbanBoundaryPolygons.length) {
+                    alert('⚠️ لا توجد بوليجونات في GeoJSON');
+                } else {
+                    alert('✅ تم تحميل حدود الحيز العمرانى');
+                    classifyUrbanInclusion();
+                }
+                try { document.getElementById('boundaryInput').value = ''; } catch(e){}
+            }
+        } catch (err) { console.error(err); alert('❌ فشل قراءة الملف'); try { document.getElementById('boundaryInput').value = ''; } catch(e){} }
+    };
+    reader.readAsText(file);
+}
+
+function classifyUrbanInclusion() {
+    if (!urbanBoundaries || urbanBoundaries.length === 0) { alert('⚠️ لا توجد حدود محملة'); return; }
+    if (!orders || !orders.length) return;
+    orders.forEach(o => {
+        let actualInside = null;
+        try {
+            if (o.point) {
+                const loc = new google.maps.LatLng(o.point.lat, o.point.lng);
+                for (let b of urbanBoundaries) { if (google.maps.geometry && google.maps.geometry.poly && google.maps.geometry.poly.containsLocation(loc, b)) { actualInside = 1; break; } }
+                if (actualInside === null) actualInside = 0;
+            } else if (o.coords && o.coords.length >= 3) {
+                const centroid = getCoordsCentroid(o.coords);
+                const loc = new google.maps.LatLng(centroid.lat, centroid.lng);
+                for (let b of urbanBoundaries) { if (google.maps.geometry && google.maps.geometry.poly && google.maps.geometry.poly.containsLocation(loc, b)) { actualInside = 1; break; } }
+                if (actualInside === null) actualInside = 0;
+            }
+        } catch (e) { actualInside = null; }
+        o.actualInside = actualInside;
+        o.classificationMismatch = (o.insideFlag !== null && actualInside !== null) ? (Number(o.insideFlag) !== Number(actualInside)) : false;
+    });
+    renderAll();
+    alert('✅ تم تصنيف الطلبات بالنسبة للحيز');
+}
+
+function getCoordsCentroid(coords) {
+    if (!coords || !coords.length) return { lat: 0, lng: 0 };
+    let lat = 0, lng = 0;
+    coords.forEach(c => { lat += c.lat; lng += c.lng; });
+    return { lat: lat / coords.length, lng: lng / coords.length };
+}
+
+// Floating badge overlay using Google Maps OverlayView
+function showFloatingBadge(latLng, text, autoHideMs = 0) {
+    removeFloatingBadge();
+    if (!map || !google || !google.maps) return;
+    const badgeDiv = document.createElement('div');
+    badgeDiv.className = 'elevation-badge';
+    badgeDiv.innerHTML = text;
+    badgeDiv.style.display = 'flex';
+
+    const Overlay = function() { };
+    Overlay.prototype = new google.maps.OverlayView();
+    Overlay.prototype.onAdd = function() {
+        this.getPanes().floatPane.appendChild(badgeDiv);
+        this.div = badgeDiv;
+    };
+    Overlay.prototype.draw = function() {
+        const proj = this.getProjection();
+        if (!proj) return;
+        const pos = proj.fromLatLngToDivPixel(new google.maps.LatLng(latLng.lat, latLng.lng));
+        this.div.style.left = pos.x + 'px';
+        this.div.style.top = pos.y + 'px';
+    };
+    Overlay.prototype.onRemove = function() { if (this.div && this.div.parentNode) this.div.parentNode.removeChild(this.div); };
+
+    floatingBadgeOverlay = new Overlay();
+    floatingBadgeOverlay.setMap(map);
+    // also update the static #elevationBadge element as a reliable fallback inside the map container
+    try {
+        const staticBadge = document.getElementById('elevationBadge');
+        if (staticBadge) {
+            staticBadge.innerHTML = text;
+            staticBadge.style.display = 'flex';
+            // set approximate position via projection if available
+            const proj = floatingBadgeOverlay.getProjection && floatingBadgeOverlay.getProjection();
+            if (proj) {
+                const pos = proj.fromLatLngToDivPixel(new google.maps.LatLng(latLng.lat, latLng.lng));
+                staticBadge.style.left = (pos.x) + 'px';
+                staticBadge.style.top = (pos.y) + 'px';
+            }
+        }
+    } catch (e) { console.warn('فشل تحديث الشارة الثابتة:', e); }
+    if (autoHideMs > 0) {
+        setTimeout(() => { try { removeFloatingBadge(); } catch(e){} }, autoHideMs);
+    }
+}
+function removeFloatingBadge() {
+    try {
+        if (floatingBadgeOverlay) { floatingBadgeOverlay.setMap(null); floatingBadgeOverlay = null; }
+        const staticBadge = document.getElementById('elevationBadge'); if (staticBadge) { staticBadge.style.display = 'none'; staticBadge.innerHTML = 'المنسوب: —'; }
+    } catch(e){}
+}
+
+function exportShapefile() {
+    if (!orders || orders.length === 0) { alert('لا توجد بيانات للتصدير'); return; }
+    const features = [];
+    orders.forEach(o => {
+        if (o.coords && o.coords.length >= 3) {
+            const coords = o.coords.map(c => [c.lng, c.lat]);
+            // ensure closed ring
+            if (coords.length && (coords[0][0] !== coords[coords.length-1][0] || coords[0][1] !== coords[coords.length-1][1])) coords.push(coords[0]);
+            features.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [coords] }, properties: { id: o.id, owner: o.owner, center: o.center, type: o.typeName } });
+        } else if (o.isElevation && o.point) {
+            features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [o.point.lng, o.point.lat] }, properties: { id: o.id, owner: o.owner, center: o.center, elevation: o.elevation } });
+        }
+    });
+    const geojson = { type: 'FeatureCollection', features };
+    try {
+        window.shpwrite.download(geojson, { folder: 'export', types: { point: 'points', polygon: 'polygons' } });
+        // also always offer GeoJSON as a direct download alongside Shapefile
+        try {
+            const blobGeo = new Blob([JSON.stringify(geojson)], { type: 'application/json' });
+            const geoName = 'export.geojson';
+            saveAs(blobGeo, geoName);
+        } catch (e) { console.warn('فشل تنزيل GeoJSON بجانب Shapefile:', e); }
+    } catch (e) {
+        // fallback: download geojson
+        const blob = new Blob([JSON.stringify(geojson)], { type: 'application/json' });
+        const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'export.geojson'; link.click();
+        alert('تنزيل GeoJSON كبديل لملف Shapefile');
+    }
 }
 
 // ============================================================
@@ -1256,18 +1759,50 @@ function renderCentersTable() {
 function renderMap() {
     if (!mapInitialized || !map) return;
     polygons.forEach(p => p.setMap(null)); polygons = [];
+    clearMarkers();
     if (!orders || orders.length === 0) return;
     orders.forEach(order => {
-        if (!order.coords || order.coords.length < 3) return;
-        try {
-            const path = order.coords.map(c => new google.maps.LatLng(c.lat, c.lng));
-            const color = order.remaining > 0 ? (order.remaining > order.due * 0.5 ? '#f44336' : '#ff9800') : '#4CAF50';
-            const polygon = new google.maps.Polygon({ paths: path, strokeColor: color, strokeOpacity: 0.8, strokeWeight: 2, fillColor: color, fillOpacity: 0.3, title: `طلب ${order.id}` });
-            polygon.setMap(map); polygons.push(polygon);
-            const center = getPolygonCenter(path);
-            const infoWindow = new google.maps.InfoWindow({ content: `<div style="padding:10px;font-size:13px;direction:rtl;"><strong onclick="zoomToOrder('${order.id}')" style="cursor:pointer;color:#1a3a5c;">طلب #${order.id}</strong><br>المالك: ${order.owner}<br>المركز: ${order.center}<br>النوع: ${order.typeName}<br>المساحة: ${order.area.toFixed(2)} م²<br>المستحق: ${order.due.toFixed(2)} ج.م<br>المتبقي: <span style="color:${order.remaining>0?'#f44336':'#4CAF50'}">${order.remaining.toFixed(2)} ج.م</span></div>` });
-            google.maps.event.addListener(polygon, 'click', function() { infoWindow.open(map, polygon); infoWindow.setPosition(center); });
-        } catch(e) { console.warn('⚠️ خطأ في رسم بوليجون:', e); }
+        // رسم بوليجون للبيانات المساحية
+        if (order.coords && order.coords.length >= 3) {
+            try {
+                const path = order.coords.map(c => new google.maps.LatLng(c.lat, c.lng));
+                const color = order.remaining > 0 ? (order.remaining > order.due * 0.5 ? '#f44336' : '#ff9800') : '#4CAF50';
+                const polygon = new google.maps.Polygon({ paths: path, strokeColor: color, strokeOpacity: 0.8, strokeWeight: 2, fillColor: color, fillOpacity: 0.3, title: `طلب ${order.id}` });
+                polygon.setMap(map); polygons.push(polygon);
+                const center = getPolygonCenter(path);
+                // clicking polygon updates the floating badge with area (no InfoWindow)
+                polygon.addListener('click', function() {
+                    try {
+                        const centroid = getPolygonCenter(path);
+                        const text = `المساحة = ${Number.isFinite(order.area)?formatNumberValue(order.area):'—'} م²`;
+                        showFloatingBadge({ lat: centroid.lat(), lng: centroid.lng() }, text, 0);
+                    } catch(e){}
+                });
+            } catch(e) { console.warn('⚠️ خطأ في رسم بوليجون:', e); }
+        }
+        // رسم نقطة المنسوب مع ايقونة مخصصة ووسم أزرق مثل الصورة المرسلة
+        else if (order.isElevation && order.point && order.point.lat && order.point.lng) {
+            try {
+                const center = new google.maps.LatLng(order.point.lat, order.point.lng);
+                // SVG marker: red circle with black border
+                const svg = encodeURIComponent(`
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="8" fill="#ff3b30" stroke="#000" stroke-width="2" />
+                    </svg>
+                `);
+                const iconUrl = `data:image/svg+xml;charset=UTF-8,${svg}`;
+                const marker = new google.maps.Marker({ position: center, map: map, icon: { url: iconUrl, scaledSize: new google.maps.Size(24,24), anchor: new google.maps.Point(12,12) }, title: `طلب ${order.id}` });
+
+                // Clicking marker updates the floating badge with elevation
+                marker.addListener('click', () => {
+                    try {
+                        const text = `${order.elevation !== undefined && order.elevation !== null ? formatNumberValue(order.elevation) : '—'}:المنسوب`;
+                        showFloatingBadge(order.point, text, 0);
+                    } catch(e){}
+                });
+                markers.push({ marker: marker });
+            } catch (e) { console.warn('⚠️ خطأ في رسم نقطة المنسوب:', e); }
+        }
     });
 }
 function getPolygonCenter(path) { let lat=0,lng=0; path.forEach(p=>{lat+=p.lat(); lng+=p.lng();}); return new google.maps.LatLng(lat/path.length, lng/path.length); }
@@ -1278,10 +1813,22 @@ function getPolygonCenter(path) { let lat=0,lng=0; path.forEach(p=>{lat+=p.lat()
 function zoomToOrder(orderId) {
     if (!mapInitialized || !map) { alert('⏳ الخريطة لم يتم تحميلها'); return; }
     const order = orders.find(o => o.id === orderId);
-    if (!order || !order.coords || order.coords.length < 3) { alert('لا توجد إحداثيات كافية'); return; }
-    const bounds = new google.maps.LatLngBounds();
-    order.coords.forEach(c => bounds.extend(new google.maps.LatLng(c.lat, c.lng)));
-    map.fitBounds(bounds); map.setZoom(18);
+    if (!order) { alert('⚠️ الطلب غير موجود'); return; }
+    if (order.coords && order.coords.length >= 3) {
+        const bounds = new google.maps.LatLngBounds();
+        order.coords.forEach(c => bounds.extend(new google.maps.LatLng(c.lat, c.lng)));
+        map.fitBounds(bounds); map.setZoom(18);
+    } else if (order.isElevation && order.point) {
+        const center = new google.maps.LatLng(order.point.lat, order.point.lng);
+        map.setCenter(center); map.setZoom(19);
+        // show floating badge over the point
+        try {
+            const text = `${order.elevation !== undefined && order.elevation !== null ? formatNumberValue(order.elevation) : '—'}:المنسوب`;
+            showFloatingBadge(order.point, text, 0);
+        } catch(e){}
+    } else {
+        alert('لا توجد إحداثيات كافية'); return;
+    }
     polygons.forEach(p => { if(p.getMap()) p.setOptions({ fillOpacity: 0.1 }); });
     setTimeout(() => { polygons.forEach(p => { if(p.getMap()) p.setOptions({ fillOpacity: 0.3 }); }); }, 3000);
 }
@@ -1335,7 +1882,7 @@ function closeEarthModal() { document.getElementById('earthModal').style.display
 function captureSingleSatellite(orderId) {
     const order = orders.find(o => o.id === orderId);
     if (!order) { alert('⚠️ الطلب غير موجود'); return; }
-    if (!order.coords || order.coords.length < 3) { alert('⚠️ لا توجد إحداثيات كافية'); return; }
+    if (!(order.coords && order.coords.length >= 3) && !(order.isElevation && order.point)) { alert('⚠️ لا توجد إحداثيات كافية'); return; }
     selectImageDestination(function(result) {
         if (result && result.cancelled) {
             alert('⛔ تم إلغاء العملية');
@@ -1368,7 +1915,8 @@ function startSingleImageCapture(order, folderHandle) {
 function extractSatelliteImages() {
     const selectedCenter = document.getElementById('filterCenter').value;
     const targetOrders = selectedCenter === 'all' ? orders : orders.filter(o => o.center === selectedCenter);
-    const validOrders = targetOrders.filter(o => o.coords && o.coords.length >= 3);
+    // include both polygons and elevation points as valid orders
+    const validOrders = targetOrders.filter(o => (o.coords && o.coords.length >= 3) || (o.isElevation && o.point));
     if (!validOrders.length) { alert('لا توجد طلبات صالحة'); return; }
     selectImageDestination(function(result) {
         if (result && result.cancelled) {
@@ -1424,6 +1972,7 @@ function startImageExtraction(validOrders, folderHandle) {
 // دالة حفظ Blob في ملف أو تنزيله
 // ============================================================
 async function saveBlobToFile(fileName, blob, folderHandle) {
+    if (shouldCancel) { console.warn('حفظ الملف تم إلغاؤه من قبل المستخدم'); return; }
     if (folderHandle) {
         try {
             const fileHandle = await folderHandle.getFileHandle(fileName, { create: true });
@@ -1445,6 +1994,60 @@ function blobToDataURL(blob) {
         reader.onerror = reject;
         reader.readAsDataURL(blob);
     });
+}
+
+// Draw a badge with given text on top-left of an image blob and return a new Blob
+function drawBadgeOnBlob(blob, text, opts = {}) {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = function() {
+            try {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.width; canvas.height = img.height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+
+                // badge style - matches .elevation-badge
+                const badgeW = Math.round(canvas.width * 0.5); // wider to mimic sample
+                const badgeH = Math.round(canvas.height * 0.11);
+                let x = 16; let y = canvas.height - badgeH - 16;
+                if (opts.anchor === 'center') {
+                    x = Math.round((canvas.width - badgeW) / 2);
+                    y = Math.round((canvas.height / 2) - badgeH - 10); // above center marker
+                }
+                ctx.fillStyle = '#1e88e5';
+                roundRect(ctx, x, y, badgeW, badgeH, 8, true, false);
+                ctx.fillStyle = '#ffffff';
+                ctx.font = `${Math.max(12, Math.round(badgeH * 0.45))}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(text, x + badgeW/2, y + badgeH/2);
+
+                canvas.toBlob(function(newBlob) {
+                    URL.revokeObjectURL(url);
+                    if (!newBlob) return reject(new Error('فشل تحويل القماش إلى Blob')); 
+                    resolve(newBlob);
+                }, 'image/jpeg', 0.92);
+            } catch (e) { URL.revokeObjectURL(url); reject(e); }
+        };
+        img.onerror = function(e) { URL.revokeObjectURL(url); reject(e); };
+        img.src = url;
+    });
+}
+
+// Utility: draw rounded rectangle
+function roundRect(ctx, x, y, w, h, r, fill, stroke) {
+    if (typeof r === 'undefined') r = 5;
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+    if (fill) ctx.fill();
+    if (stroke) ctx.stroke();
 }
 
 function normalizeCoords(coords) {
@@ -1531,45 +2134,81 @@ function waitForMapReady(mapInstance) {
     });
 }
 
+// Wait until the static elevation badge is present and has non-zero size (or timeout)
+function waitForBadgeRendered(timeoutMs = 1200) {
+    return new Promise(resolve => {
+        const start = Date.now();
+        const check = () => {
+            try {
+                const badge = document.getElementById('elevationBadge');
+                if (badge && badge.style.display !== 'none') {
+                    const rect = badge.getBoundingClientRect();
+                    if (rect.width > 2 && rect.height > 2) return resolve(true);
+                }
+            } catch (e) {}
+            if (Date.now() - start > timeoutMs) return resolve(false);
+            setTimeout(check, 60);
+        };
+        check();
+    });
+}
+
 // ============================================================
 // دالة التقاط الصورة باستخدام Static Maps API (موثوقة)
 // ============================================================
 function captureSatelliteImageWithHandle(order, folderHandle, callback) {
-    if (!order.coords || order.coords.length < 3) {
+    if (shouldCancel) { callback(false, null); return; }
+    const width = 640; const height = 640;
+    // Prefer local capture via html2canvas: polygons and points
+    const tryHtmlCapture = () => {
+        if (order.coords && order.coords.length >= 3) {
+            captureHtml2Canvas(order, folderHandle, callback);
+            return true;
+        } else if (order.isElevation && order.point && order.point.lat && order.point.lng) {
+            captureHtml2CanvasPoint(order, folderHandle, callback);
+            return true;
+        }
+        return false;
+    };
+    try {
+        if (tryHtmlCapture()) return; // html2canvas started
+    } catch(e) { console.warn('html2canvas primary capture failed, falling back to Static Maps', e); }
+
+    // If polygon coordinates exist use path drawing (Static Maps fallback)
+    if (order.coords && order.coords.length >= 3) {
+        const normalizedCoords = normalizeCoords(order.coords);
+        const simplifiedCoords = simplifyCoords(normalizedCoords, 30);
+        const bounds = new google.maps.LatLngBounds();
+        simplifiedCoords.forEach(c => bounds.extend(new google.maps.LatLng(c.lat, c.lng)));
+        const center = bounds.getCenter();
+        const zoom = calculateOptimalZoom(bounds);
+
+        const pathItems = ['fillcolor:0x4285F430', 'color:0x4285F4', 'weight:4'];
+        simplifiedCoords.forEach(c => pathItems.push(`${c.lat},${c.lng}`));
+        pathItems.push(`${simplifiedCoords[0].lat},${simplifiedCoords[0].lng}`);
+        const pathParam = encodeURIComponent(pathItems.join('|'));
+
+        var staticMapUrl = `https://maps.googleapis.com/maps/api/staticmap?` +
+            `center=${center.lat()},${center.lng()}` +
+            `&zoom=${zoom}` +
+            `&size=${width}x${height}` +
+            `&scale=2` +
+            `&maptype=satellite` +
+            `&path=${pathParam}` +
+            `&markers=color:0xff0000%7C${center.lat()},${center.lng()}` +
+            `&key=${currentApiKey}` +
+            `&format=jpg` +
+            `&timestamp=${Date.now()}`;
+    }
+    // Otherwise if single point (elevation) use center marker only
+    else if (order.isElevation && order.point && order.point.lat && order.point.lng) {
+        const centerLat = order.point.lat, centerLng = order.point.lng;
+        const zoom = 20;
+        var staticMapUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${centerLat},${centerLng}&zoom=${zoom}&size=${width}x${height}&scale=2&maptype=satellite&markers=color:0xff0000%7C${centerLat},${centerLng}&key=${currentApiKey}&format=jpg&timestamp=${Date.now()}`;
+    } else {
         callback(false, null);
         return;
     }
-
-    const normalizedCoords = normalizeCoords(order.coords);
-    if (normalizedCoords.length < 3) {
-        callback(false, null);
-        return;
-    }
-
-    const simplifiedCoords = simplifyCoords(normalizedCoords, 30);
-    const bounds = new google.maps.LatLngBounds();
-    simplifiedCoords.forEach(c => bounds.extend(new google.maps.LatLng(c.lat, c.lng)));
-    const center = bounds.getCenter();
-    const zoom = calculateOptimalZoom(bounds);
-    const width = 640;
-    const height = 640;
-
-    const pathItems = ['fillcolor:0x4285F430', 'color:0x4285F4', 'weight:4'];
-    simplifiedCoords.forEach(c => pathItems.push(`${c.lat},${c.lng}`));
-    pathItems.push(`${simplifiedCoords[0].lat},${simplifiedCoords[0].lng}`);
-    const pathParam = encodeURIComponent(pathItems.join('|'));
-
-    const staticMapUrl = `https://maps.googleapis.com/maps/api/staticmap?` +
-        `center=${center.lat()},${center.lng()}` +
-        `&zoom=${zoom}` +
-        `&size=${width}x${height}` +
-        `&scale=2` +
-        `&maptype=satellite` +
-        `&path=${pathParam}` +
-        `&markers=color:0xff0000%7C${center.lat()},${center.lng()}` +
-        `&key=${currentApiKey}` +
-        `&format=jpg` +
-        `&timestamp=${Date.now()}`;
 
     fetch(staticMapUrl, { cache: 'no-store', mode: 'cors' })
         .then(response => {
@@ -1581,28 +2220,112 @@ function captureSatelliteImageWithHandle(order, folderHandle, callback) {
         .then(async function(blob) {
             try {
                 const fileName = `${order.id}.jpg`;
-                const base64data = await blobToDataURL(blob);
-                await saveBlobToFile(fileName, blob, folderHandle);
+                let base64data = null;
+                // Composite badge only for elevation points (do not write area on polygon images)
+                if (order.isElevation && order.elevation !== undefined && order.elevation !== null) {
+                    try {
+                        const text = `المنسوب = ${formatNumberValue(order.elevation)}`;
+                        const composited = await drawBadgeOnBlob(blob, text, { anchor: 'center' });
+                        base64data = await blobToDataURL(composited);
+                        await saveBlobToFile(fileName, composited, folderHandle);
+                    } catch (err) {
+                        console.warn('⚠️ فشل تركيب الوسم على الصورة، سيتم حفظ الصورة الأصلية', err);
+                        base64data = await blobToDataURL(blob);
+                        await saveBlobToFile(fileName, blob, folderHandle);
+                    }
+                } else {
+                    base64data = await blobToDataURL(blob);
+                    await saveBlobToFile(fileName, blob, folderHandle);
+                }
                 callback(true, base64data);
             } catch (err) {
-                console.error('❌ خطأ في حفظ الصورة:', err);
-                callback(true, null);
+                try {
+                    console.error('❌ خطأ في حفظ الصورة، سيتم محاولة إظهار المعاينة من الBlob:', err);
+                    const preview = await blobToDataURL(blob);
+                    callback(true, preview);
+                } catch (e2) {
+                    console.error('❌ فشل إنشاء معاينة من الBlob:', e2);
+                    callback(true, null);
+                }
             }
         })
         .catch(err => {
             console.error('❌ فشل Static Maps API للطلب:', order.id, err);
-            captureHtml2Canvas(order, folderHandle, callback);
+            // fallback: for polygons try html2canvas, for points try fallbackStaticMap
+            if (order.coords && order.coords.length >= 3) captureHtml2Canvas(order, folderHandle, callback);
+            else if (order.isElevation && order.point) fallbackStaticMap(order, folderHandle, callback);
+            else callback(false, null);
         });
+}
+
+// Capture a single elevation point using html2canvas: center, show badge, take screenshot
+function captureHtml2CanvasPoint(order, folderHandle, callback) {
+    if (shouldCancel) { callback(false, null); return; }
+    if (!mapInitialized || !map) { callback(false, null); return; }
+    const prevCenter = map.getCenter ? map.getCenter() : null;
+    const prevZoom = map.getZoom ? map.getZoom() : null;
+    // hide other markers/polygons/boundaries so only the target point appears
+    const hiddenMarkers = [];
+    try {
+        if (Array.isArray(markers)) {
+            markers.forEach(m => {
+                try {
+                    const actual = m && m.marker ? m.marker : m;
+                    if (actual && typeof actual.getMap === 'function' && actual.getMap()) { hiddenMarkers.push(actual); actual.setMap(null); }
+                } catch(e){}
+            });
+        }
+    } catch(e){}
+    const hiddenPolygons = [];
+    try { if (Array.isArray(polygons)) polygons.forEach(p => { try { if (p && p.getMap && p.getMap()) { hiddenPolygons.push(p); p.setMap(null); } } catch(e){} }); } catch(e){}
+    const hiddenBoundaries = [];
+    try { if (Array.isArray(urbanBoundaryPolygons)) urbanBoundaryPolygons.forEach(p => { try { if (p && p.getMap && p.getMap()) { hiddenBoundaries.push(p); p.setMap(null); } } catch(e){} }); } catch(e){}
+
+    // show temporary marker
+    const marker = new google.maps.Marker({ position: new google.maps.LatLng(order.point.lat, order.point.lng), map: map, clickable: false, icon: { path: google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: '#ff0000', fillOpacity: 1, strokeWeight: 0 } });
+    map.setCenter(new google.maps.LatLng(order.point.lat, order.point.lng));
+    map.setZoom(19);
+    try { if (order.elevation !== undefined && order.elevation !== null) showFloatingBadge(order.point, `${formatNumberValue(order.elevation)}:المنسوب`, 0); } catch(e){}
+    waitForMapReady(map).then(() => {
+        setTimeout(async () => {
+            if (shouldCancel) { try { marker.setMap(null); if (prevCenter) map.setCenter(prevCenter); if (prevZoom) map.setZoom(prevZoom); hiddenMarkers.forEach(m=>m.setMap(map)); hiddenPolygons.forEach(p=>p.setMap(map)); hiddenBoundaries.forEach(p=>p.setMap(map)); } catch(e){}; callback(false, null); return; }
+            const mapElement = document.getElementById('map');
+            // ensure badge rendered and visible before capture
+            try { await waitForBadgeRendered(1200); } catch(e){}
+            html2canvas(mapElement, { useCORS:true, scale:2, backgroundColor:'#ffffff', logging:false, imageTimeout:5000 }).then(canvas => {
+                try { removeFloatingBadge(); } catch(e){}
+                const cropped = cropCanvasToContent(canvas);
+                cropped.toBlob(async function(blob) {
+                    try {
+                        const fileName = `${order.id}.jpg`;
+                        const dataUrl = cropped.toDataURL('image/jpeg', 0.92);
+                        await saveBlobToFile(fileName, blob, folderHandle);
+                        marker.setMap(null);
+                        if (prevCenter) map.setCenter(prevCenter);
+                        if (prevZoom) map.setZoom(prevZoom);
+                        // restore hidden overlays
+                        try { hiddenMarkers.forEach(m=>m.setMap(map)); hiddenPolygons.forEach(p=>p.setMap(map)); hiddenBoundaries.forEach(p=>p.setMap(map)); } catch(e){}
+                        callback(true, dataUrl);
+                    } catch(err) {
+                        console.error('❌ خطأ في حفظ صورة النقطة html2canvas:', err);
+                        marker.setMap(null);
+                        if (prevCenter) map.setCenter(prevCenter);
+                        if (prevZoom) map.setZoom(prevZoom);
+                        try { hiddenMarkers.forEach(m=>m.setMap(map)); hiddenPolygons.forEach(p=>p.setMap(map)); hiddenBoundaries.forEach(p=>p.setMap(map)); } catch(e){}
+                        callback(false, null);
+                    }
+                }, 'image/jpeg', 0.92);
+            }).catch(err => { console.error('❌ خطأ في html2canvas للنقطة:', err); marker.setMap(null); if (prevCenter) map.setCenter(prevCenter); if (prevZoom) map.setZoom(prevZoom); try { hiddenMarkers.forEach(m=>m.setMap(map)); hiddenPolygons.forEach(p=>p.setMap(map)); hiddenBoundaries.forEach(p=>p.setMap(map)); } catch(e){}; callback(false, null); });
+        }, 700);
+    }).catch(() => { marker.setMap(null); if (prevCenter) map.setCenter(prevCenter); if (prevZoom) map.setZoom(prevZoom); callback(false, null); });
 }
 
 // ============================================================
 // دالة التقاط الصورة باستخدام html2canvas بعد تحميل البلاط
 // ============================================================
 function captureHtml2Canvas(order, folderHandle, callback) {
-    if (!mapInitialized || !map) {
-        callback(false, null);
-        return;
-    }
+    if (shouldCancel) { callback(false, null); return; }
+    if (!mapInitialized || !map) { callback(false, null); return; }
 
     const previousPolygons = polygons.slice();
     previousPolygons.forEach(p => p.setMap(null));
@@ -1626,7 +2349,8 @@ function captureHtml2Canvas(order, folderHandle, callback) {
     map.setZoom(calculateOptimalZoom(bounds));
 
     waitForMapReady(map).then(() => {
-        setTimeout(() => {
+        setTimeout(async () => {
+            if (shouldCancel) { try { previousPolygons.forEach(p => p.setMap(map)); tempPolygon.setMap(null); } catch(e){}; callback(false, null); return; }
             const mapElement = document.getElementById('map');
             if (!mapElement) {
                 previousPolygons.forEach(p => p.setMap(map));
@@ -1634,6 +2358,19 @@ function captureHtml2Canvas(order, folderHandle, callback) {
                 callback(false, null);
                 return;
             }
+
+            // show floating badge overlay at center so it's included in the capture (only for elevation points)
+            try {
+                if (order.isElevation && order.elevation !== undefined && order.elevation !== null) {
+                    const text = `${formatNumberValue(order.elevation)}:المنسوب`;
+                    showFloatingBadge(order.point || { lat: center.lat(), lng: center.lng() }, text, 0);
+                }
+            } catch(e){}
+
+            // wait until the static elevation badge is rendered and stable
+            try { await waitForBadgeRendered(1200); } catch(e) {}
+            // give a short extra delay to allow overlays and tiles to settle
+            await new Promise(r => setTimeout(r, 250));
 
             html2canvas(mapElement, {
                 useCORS: true,
@@ -1643,9 +2380,12 @@ function captureHtml2Canvas(order, folderHandle, callback) {
                 logging: false,
                 imageTimeout: 5000
             }).then(canvas => {
+                // remove floating badge after capture
+                try { removeFloatingBadge(); } catch(e){}
                 const croppedCanvas = cropCanvasToContent(canvas);
                 croppedCanvas.toBlob(async function(blob) {
                     try {
+                        if (shouldCancel) { try { previousPolygons.forEach(p => p.setMap(map)); tempPolygon.setMap(null); } catch(e){}; callback(false, null); return; }
                         const fileName = `${order.id}.jpg`;
                         const base64data = croppedCanvas.toDataURL('image/jpeg', 0.92);
                         await saveBlobToFile(fileName, blob, folderHandle);
@@ -1726,10 +2466,18 @@ function cropCanvasToContent(canvas) {
 
 function fallbackStaticMap(order, folderHandle, callback) {
     try {
-        const bounds = new google.maps.LatLngBounds();
-        order.coords.forEach(c => bounds.extend(new google.maps.LatLng(c.lat, c.lng)));
-        const center = bounds.getCenter();
-        const staticMapUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${center.lat()},${center.lng()}&zoom=18&size=600x400&maptype=satellite&key=${currentApiKey}&format=jpg`;
+        let staticMapUrl = null;
+        if (order.coords && order.coords.length) {
+            const bounds = new google.maps.LatLngBounds();
+            order.coords.forEach(c => bounds.extend(new google.maps.LatLng(c.lat, c.lng)));
+            const center = bounds.getCenter();
+            staticMapUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${center.lat()},${center.lng()}&zoom=19&size=600x400&maptype=satellite&key=${currentApiKey}&format=jpg`;
+        } else if (order.isElevation && order.point) {
+            const centerLat = order.point.lat, centerLng = order.point.lng;
+            staticMapUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${centerLat},${centerLng}&zoom=20&size=600x400&maptype=satellite&key=${currentApiKey}&format=jpg`;
+        } else {
+            callback(false, null); return;
+        }
         fetch(staticMapUrl).then(response => response.blob()).then(async function(blob) {
             try {
                 const fileName = `${order.id}.jpg`;
@@ -1771,10 +2519,10 @@ function getCurrentVisibleExportData() {
             'المالك': o.owner,
             'المركز': o.center,
             'النوع': o.typeName,
-            'المساحة': o.area.toFixed(2),
-            'المدفوع': o.paid.toFixed(2),
-            'المستحق': o.due.toFixed(2),
-            'المتبقي': o.remaining.toFixed(2),
+            'المساحة': formatNumberValue(o.area),
+            'المدفوع': formatNumberValue(o.paid),
+            'المستحق': formatNumberValue(o.due),
+            'المتبقي': formatNumberValue(o.remaining),
             'الحالة': o.status
         }));
         return { rows, sheetName: 'الفروق' };
@@ -1794,10 +2542,10 @@ function getCurrentVisibleExportData() {
         const rows = Object.entries(centersData).map(([center, data]) => ({
             'المركز': center,
             'عدد الطلبات': data.count,
-            'إجمالي المساحة': data.totalArea.toFixed(2),
-            'إجمالي المدفوع': data.totalPaid.toFixed(2),
-            'إجمالي المستحق': data.totalDue.toFixed(2),
-            'إجمالي المتبقي': data.totalRemaining.toFixed(2)
+            'إجمالي المساحة': formatNumberValue(data.totalArea),
+            'إجمالي المدفوع': formatNumberValue(data.totalPaid),
+            'إجمالي المستحق': formatNumberValue(data.totalDue),
+            'إجمالي المتبقي': formatNumberValue(data.totalRemaining)
         }));
         return { rows, sheetName: 'المراكز' };
     }
@@ -2054,31 +2802,48 @@ function loadFromLocalStorage() {
 function updateStats() {
     document.getElementById('totalOrders').textContent = orders ? orders.length : 0;
     const totalDiff = orders ? orders.reduce((sum,o) => sum + (o.remaining > 0 ? o.remaining : 0), 0) : 0;
-    document.getElementById('totalDiff').textContent = totalDiff.toFixed(2);
+    document.getElementById('totalDiff').textContent = formatNumberValue(totalDiff);
     const totalArea = orders ? orders.reduce((s,o) => s + o.area, 0) : 0;
-    document.getElementById('totalArea').textContent = totalArea.toFixed(2);
+    document.getElementById('totalArea').textContent = formatNumberValue(totalArea);
     document.getElementById('totalCenters').textContent = allCenters ? allCenters.length : 0;
 }
 function applyFilters() {
     if (!orders || orders.length === 0) { document.getElementById('ordersBody').innerHTML = `<tr><td colspan="12" style="text-align:center;color:#999;">لا توجد بيانات</td></tr>`; return; }
     const center = document.getElementById('filterCenter').value;
-    const type = document.getElementById('filterType').value;
+    const type = 'all';
     const search = document.getElementById('searchInput').value.toLowerCase();
     const highlightFilter = document.getElementById('highlightFilter').value;
     const filtered = orders.filter(o => {
         const matchCenter = center === 'all' || o.center === center;
-        const matchType = type === 'all' || o.typeCategory === type;
+        const matchType = true; // type filter removed by user
         const matchSearch = o.id.includes(search) || o.owner.includes(search);
         const highlightType = getOrderHighlightType(o);
-        const matchHighlight = highlightFilter === 'all' || highlightType === highlightFilter;
+        let matchHighlight = false;
+        if (highlightFilter === 'all') matchHighlight = true;
+        else if (highlightFilter === 'mismatch') matchHighlight = !!o.classificationMismatch;
+        else matchHighlight = highlightType === highlightFilter;
         return matchCenter && matchType && matchSearch && matchHighlight;
     });
     const tbody = document.getElementById('ordersBody');
     if (!filtered.length) { tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;color:#999;">لا توجد نتائج</td></tr>`; return; }
     renderOrdersTable(filtered);
 }
-function clearSearch() { document.getElementById('searchInput').value = ''; document.getElementById('filterCenter').value = 'all'; document.getElementById('filterType').value = 'all'; document.getElementById('highlightFilter').value = 'all'; applyFilters(); }
+function clearSearch() { document.getElementById('searchInput').value = ''; document.getElementById('filterCenter').value = 'all'; document.getElementById('highlightFilter').value = 'all'; applyFilters(); }
 function clearMap() { if(polygons) { polygons.forEach(p => p.setMap(null)); polygons = []; } }
+function clearMarkers() {
+    if (!markers || !markers.length) return;
+    markers.forEach(m => {
+        try {
+            if (m && typeof m.setMap === 'function') m.setMap(null);
+            else {
+                if (m.marker && m.marker.setMap) m.marker.setMap(null);
+                if (m.infoWindow && typeof m.infoWindow.close === 'function') m.infoWindow.close();
+                if (m.circle && typeof m.circle.setMap === 'function') m.circle.setMap(null);
+            }
+        } catch (e) {}
+    });
+    markers = [];
+}
 function toggleMapType() { if (!mapInitialized || !map) return; mapType = mapType === 'satellite' ? 'roadmap' : 'satellite'; map.setMapTypeId(mapType); }
 function clearAll() {
     if (!confirm('مسح جميع البيانات؟')) return;
@@ -2094,8 +2859,8 @@ function showDetail(orderId) {
     content.innerHTML = `<div style="direction:rtl;font-size:14px;">
         <p><strong>رقم الطلب:</strong> ${order.id}</p><p><strong>المالك:</strong> ${order.owner}</p><p><strong>المركز:</strong> ${order.center}</p>
         <p><strong>التاريخ:</strong> ${order.date}</p><p><strong>النوع:</strong> ${order.typeName}</p>
-        <p><strong>المساحة:</strong> ${order.area.toFixed(2)} م²</p><p><strong>المدفوع:</strong> ${order.paid.toFixed(2)} ج.م</p>
-        <p><strong>المستحق:</strong> ${order.due.toFixed(2)} ج.م</p><p><strong>المتبقي:</strong> <span style="color:${order.remaining>0?'#f44336':'#4CAF50'}">${order.remaining.toFixed(2)} ج.م</span></p>
+        <p><strong>المساحة:</strong> ${formatNumberValue(order.area)} م²</p><p><strong>المدفوع:</strong> ${formatNumberValue(order.paid)} ج.م</p>
+        <p><strong>المستحق:</strong> ${formatNumberValue(order.due)} ج.م</p><p><strong>المتبقي:</strong> <span style="color:${order.remaining>0?'#f44336':'#4CAF50'}">${formatNumberValue(order.remaining)} ج.م</span></p>
         <hr><p><strong>الحد الشمالي:</strong> ${order.northernBorder || 'غير محدد'}</p>
         <p><strong>الحد الجنوبي:</strong> ${order.southernBorder || 'غير محدد'}</p>
         <p><strong>الحد الشرقي:</strong> ${order.easternBorder || 'غير محدد'}</p>
@@ -2142,6 +2907,11 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+    // attach file input handlers after functions are defined
+    const fileEl = document.getElementById('fileInput');
+    if (fileEl) fileEl.addEventListener('change', handleFile);
+    const apiKeyEl = document.getElementById('apiKeyFile');
+    if (apiKeyEl) apiKeyEl.addEventListener('change', handleApiKeyFile);
 });
 window.addEventListener('beforeunload', function(e) {
     if (orders && orders.length > 0) { e.preventDefault(); e.returnValue = '⚠️ توجد بيانات غير محفوظة. هل أنت متأكد من المغادرة؟'; return e.returnValue; }
