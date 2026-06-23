@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>نظام مراجعة الرفع المساحى والمنسوب</title>
+    <title> مراجعة الرفع المساحي والمنسوب</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
@@ -407,7 +407,7 @@
 <div class="modal" id="configModal"><div class="modal-content"><span class="modal-close" onclick="closeConfig()">&times;</span><h3>⚙️ إدارة شرائح الأسعار</h3><p style="color:#666;margin-bottom:12px;font-size:13px;">القيمة الثابتة لكل شريحة</p><div id="configTableContainer"></div><div style="margin-top:15px;display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-primary" onclick="saveConfig()">💾 حفظ</button><button class="btn btn-warning" onclick="resetConfig()">↩️ إعادة تعيين</button></div></div></div>
 <div class="modal" id="earthModal"><div class="modal-content" style="max-width:95%;height:90vh;"><span class="modal-close" onclick="closeEarthModal()">&times;</span><h3>🌍 Google Earth</h3><div id="earthContainer" style="width:100%;height:85vh;border-radius:8px;border:1px solid #ddd;"></div></div></div>
 <div class="modal" id="detailModal"><div class="modal-content"><span class="modal-close" onclick="closeDetailModal()">&times;</span><h3>📄 تفاصيل الطلب</h3><div id="detailContent"></div></div></div>
-<div class="modal" id="progressModal"><div class="modal-content" style="max-width:500px;"><span class="modal-close" onclick="closeProgressModal()">&times;</span><h3>🛰️ جاري استخراج الصور</h3><div id="progressStatus" style="text-align:center;margin:12px 0;font-size:14px;">جاري التحميل...</div><div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div><div id="progressDetails" style="text-align:center;color:#666;font-size:12px;"></div><div class="cancel-btn-container"><button class="btn btn-stop" onclick="cancelExtraction()">⏹️ إلغاء</button></div></div></div>
+<div class="modal" id="progressModal"><div class="modal-content" style="max-width:500px;"><span class="modal-close" onclick="closeProgressModal()">&times;</span><h3>🛰️ جاري استخراج الصور</h3><div id="progressStatus" style="text-align:center;margin:12px 0;font-size:14px;">جاري التحميل...</div><div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div><div id="progressDetails" style="text-align:center;color:#666;font-size:12px;"></div><div class="cancel-btn-container"><button class="btn btn-stop" onclick="cancelExtraction()">⏹️ إلغاء</button><button class="btn btn-secondary" onclick="retryDeferredExtractions()" title="إعادة محاولة الطلبات المؤجلة">🔁 إعادة المحاولة للطلبات المؤجلة</button></div></div></div>
 <div class="modal" id="saveModal"><div class="modal-content" style="max-width:500px;"><span class="modal-close" onclick="closeSaveModal()">&times;</span><h3 id="saveModalTitle">💾 اختيار مكان الحفظ</h3><div class="save-option"><label>📁 المجلد:</label><input type="text" id="savePathInput" placeholder="اختر المجلد..."><button class="btn btn-secondary" onclick="selectFolder()">📂 اختيار</button></div><div id="saveMessage" style="margin:8px 0;color:#666;font-size:12px;"></div><div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-success" onclick="confirmSave()">💾 حفظ</button><button class="btn btn-danger" onclick="closeSaveModal()">❌ إلغاء</button></div></div></div>
 
 <script>
@@ -421,9 +421,13 @@ let currentActiveTab = 'orders';
 let currentApiKey = '';
 let saveCallback = null, selectedFolderHandle = null;
 let isExtracting = false, shouldCancel = false, extractedImagesData = [];
+let deferredExtractionQueue = [];
 let needsMapRefresh = false;
 let focusGuardInterval = null;
 let selectedOrderIds = new Set();
+let extractionSessionTotal = 0;
+let extractionSessionOriginalIds = null;
+let extractionPaused = false;
 
 function startExtractionFocusGuard() {
     stopExtractionFocusGuard();
@@ -436,6 +440,41 @@ function startExtractionFocusGuard() {
         }
         ensureExtractionWindowActive();
     }, 200);
+}
+
+function retryDeferredExtractions() {
+    try {
+        if (!deferredExtractionQueue || deferredExtractionQueue.length === 0) {
+            alert('لا توجد طلبات مؤجلة لإعادة المحاولة');
+            return;
+        }
+        if (isExtracting) {
+            alert('⏳ توجد عملية استخراج جارية حالياً، انتظر حتى تنتهي أو أوقفها ثم حاول مجدداً');
+            return;
+        }
+        // take snapshot of queue and clear it to avoid double retries
+        const dq = deferredExtractionQueue.slice();
+        deferredExtractionQueue = [];
+        // deduplicate and remove orders already completed
+        const completedIds = new Set((extractedImagesData || []).map(i => i.id));
+        const seen = new Set();
+        const ordersToRetry = [];
+        dq.forEach(d => {
+            const o = d && d.order;
+            if (!o || !o.id) return;
+            if (completedIds.has(o.id)) return; // already done
+            if (seen.has(o.id)) return;
+            seen.add(o.id);
+            ordersToRetry.push(o);
+        });
+        const folder = dq[0] ? dq[0].folderHandle : null;
+        if (!ordersToRetry.length) {
+            alert('لا توجد طلبات صالحة في قائمة التأجيل');
+            return;
+        }
+        console.log('🔁 إعادة محاولة يديوية للطلبات المؤجلة:', ordersToRetry.map(o=>o.id).join(','));
+        startImageExtraction(ordersToRetry, folder, true);
+    } catch (e) { console.error('فشل بدء إعادة المحاولة:', e); alert('حدث خطأ أثناء محاولة إعادة المحاولة'); }
 }
 function stopExtractionFocusGuard() {
     if (focusGuardInterval) {
@@ -760,11 +799,17 @@ function handleApiKeyFile(event) {
                 document.getElementById('apiStatus').textContent = '❌ الملف فارغ';
                 return;
             }
-            currentApiKey = content;
+            const sanitized = sanitizeApiKey(content);
+            if (!sanitized) {
+                document.getElementById('apiStatus').className = 'api-status error';
+                document.getElementById('apiStatus').textContent = '❌ الملف لا يحتوي على مفتاح صالح. افتح ملفًا يحتوي فقط على المفتاح.';
+                if (callback) callback(false);
+                return;
+            }
             document.getElementById('fileNameDisplay').textContent = '✅ ' + file.name;
             document.getElementById('apiStatus').className = 'api-status loading';
             document.getElementById('apiStatus').textContent = '⏳ جاري التحديث...';
-            updateApiKey(currentApiKey, function(success) {
+            updateApiKey(sanitized, function(success) {
                 if (success) {
                     document.getElementById('apiStatus').className = 'api-status success';
                     document.getElementById('apiStatus').textContent = '✅ تم التحديث';
@@ -783,16 +828,21 @@ function handleApiKeyFile(event) {
 }
 
 function updateApiKey(apiKey, callback) {
-    if (!apiKey || apiKey === '') {
+    // sanitize and validate the provided apiKey before using
+    const sanitized = sanitizeApiKey(apiKey);
+    if (!sanitized) {
+        console.warn('❌ مفتاح API غير صالح:', apiKey ? (String(apiKey).slice(0,40) + '...') : apiKey);
+        document.getElementById('mapLoading').innerHTML = '❌ المفتاح غير صالح. رفع ملف نصي يحتوي فقط على المفتاح.';
         if (callback) callback(false);
         return;
     }
+    currentApiKey = sanitized;
     const oldScript = document.querySelector('script[src*="maps.googleapis.com"]');
     if (oldScript) oldScript.remove();
     if (map) { map = null; mapInitialized = false; }
 
     const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=drawing,geometry&v=3&callback=initMap`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(currentApiKey)}&libraries=drawing,geometry&v=3&callback=initMap`;
     script.async = true;
     script.defer = true;
     script.onerror = function() {
@@ -803,7 +853,30 @@ function updateApiKey(apiKey, callback) {
         if (callback) callback(true);
     };
     document.head.appendChild(script);
-    try { localStorage.setItem('googleMapsApiKey', apiKey); } catch(e) {}
+    try { localStorage.setItem('googleMapsApiKey', currentApiKey); } catch(e) {}
+}
+
+function sanitizeApiKey(content) {
+    if (!content) return null;
+    const s = String(content).trim();
+    // Prefer explicit Google-style API key (starts with AIza)
+    const aizMatch = s.match(/(AIza[0-9A-Za-z-_]{35,})/);
+    if (aizMatch && aizMatch[1] && !/[\s|]/.test(aizMatch[1])) return aizMatch[1];
+    // Otherwise try to find a clean token (alnum, - and _), length 20-50
+    const tokenMatch = s.match(/([A-Za-z0-9_-]{20,50})/);
+    if (tokenMatch && tokenMatch[1] && !/[\s|]/.test(tokenMatch[1])) return tokenMatch[1];
+    // If the content appears to be a single token but contains pipes or spaces, reject
+    if (/\|/.test(s) || /\s{2,}/.test(s)) return null;
+    // Last resort: if the whole trimmed string looks like a key-like token, accept
+    if (/^[A-Za-z0-9_-]{20,60}$/.test(s)) return s;
+    return null;
+}
+
+function isValidApiKey(key) { return !!(key && /^[A-Za-z0-9_-]{20,60}$/.test(key) && !/[\s|]/.test(key)); }
+
+function getApiKeyForRequest() {
+    if (!isValidApiKey(currentApiKey)) return null;
+    return encodeURIComponent(currentApiKey);
 }
 
 // ============================================================
@@ -1926,21 +1999,29 @@ function extractSatelliteImages() {
         startImageExtraction(validOrders, result || null);
     });
 }
-function startImageExtraction(validOrders, folderHandle) {
-    isExtracting = true; shouldCancel = false; extractedImagesData = [];
+function startImageExtraction(validOrders, folderHandle, isResume = false) {
+    isExtracting = true; shouldCancel = false;
+    if (!isResume) {
+        extractedImagesData = [];
+        extractionSessionTotal = validOrders ? validOrders.length : 0;
+        extractionSessionOriginalIds = validOrders ? validOrders.map(o => o.id) : null;
+    }
     startExtractionFocusGuard();
     document.getElementById('progressModal').style.display = 'flex';
-    document.getElementById('progressFill').style.width = '0%';
-    document.getElementById('progressStatus').textContent = `جاري التقاط صور ${validOrders.length} طلب...`;
+    // compute completed/total when resuming
+    let completed = (Array.isArray(extractedImagesData)) ? extractedImagesData.length : 0;
+    let total = (extractionSessionTotal && extractionSessionTotal > 0) ? extractionSessionTotal : (completed + (validOrders ? validOrders.length : 0));
+    document.getElementById('progressFill').style.width = (total > 0 ? (completed / total) * 100 : 0) + '%';
+    document.getElementById('progressStatus').textContent = `جاري التقاط صور ${total} طلب...`;
     document.getElementById('progressDetails').textContent = 'جاري التحميل...';
-    let completed = 0, total = validOrders.length, failed = 0, isProcessing = false;
+    let failed = 0, isProcessing = false;
     function processNext(index) {
         if (shouldCancel) {
             isExtracting = false;
             stopExtractionFocusGuard();
             document.getElementById('progressModal').style.display = 'none';
             alert(`⏹️ تم الإلغاء. تم التقاط ${completed} صورة`);
-            if (extractedImagesData.length) exportImagesExcel(extractedImagesData, folderHandle);
+            // Do NOT export Excel on cancel — only export when full extraction completes
             return;
         }
         if (index >= validOrders.length) {
@@ -1952,12 +2033,34 @@ function startImageExtraction(validOrders, folderHandle) {
             if (extractedImagesData.length) exportImagesExcel(extractedImagesData, folderHandle);
             return;
         }
+        // If the tab becomes hidden, pause extraction: move remaining orders to deferred queue and stop.
+        if (document.hidden) {
+            try {
+                const remaining = validOrders.slice(index);
+                remaining.forEach(o => { try { deferredExtractionQueue.push({ order: o, folderHandle }); } catch(e){} });
+                // trim the working list to stop processing
+                validOrders.length = index;
+                isExtracting = false;
+                stopExtractionFocusGuard();
+                console.warn('⏸️ تم إيقاف الاستخراج مؤقتاً لأن التبويب أصبح في الخلفية. تم نقل', remaining.length, 'طلب إلى قائمة التأجيل.');
+                // hide progress modal while in background
+                try { document.getElementById('progressModal').style.display = 'none'; } catch(e){}
+            } catch(e) { console.warn('فشل أثناء وضع الطلبات المؤجلة عند الإخفاء:', e); }
+            return;
+        }
         if (isProcessing) return;
         isProcessing = true;
         const order = validOrders[index];
         document.getElementById('progressDetails').textContent = `جاري معالجة: ${order.id} - ${order.owner}`;
         captureSatelliteImageWithHandle(order, folderHandle, function(success, imageData) {
-            if (success) { completed++; if (imageData) extractedImagesData.push({ id: order.id, imageData, fileName: `${order.id}.jpg` }); } else failed++;
+            if (success === 'deferred') {
+                // do not count as failed; will retry when page visible
+                console.warn('🔁 تم تأجيل هذا الطلب مؤقتاً:', order.id);
+            } else if (success) {
+                completed++; if (imageData) extractedImagesData.push({ id: order.id, imageData, fileName: `${order.id}.jpg` });
+            } else {
+                failed++;
+            }
             const progress = ((completed + failed) / total) * 100;
             document.getElementById('progressFill').style.width = progress + '%';
             document.getElementById('progressStatus').textContent = `تم التقاط ${completed} من ${total}`;
@@ -2134,6 +2237,25 @@ function waitForMapReady(mapInstance) {
     });
 }
 
+// Retry fetch helper that returns a Blob when successful
+function retryFetchBlob(url, options = {}, attempts = 3, delayMs = 700) {
+    return new Promise((resolve, reject) => {
+        let tries = 0;
+        const attempt = () => {
+            tries++;
+            fetch(url, options).then(response => {
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                return response.blob();
+            }).then(blob => resolve({ blob, response: null })).catch(err => {
+                if (tries < attempts) {
+                    setTimeout(attempt, delayMs * tries);
+                } else reject(err);
+            });
+        };
+        attempt();
+    });
+}
+
 // Wait until the static elevation badge is present and has non-zero size (or timeout)
 function waitForBadgeRendered(timeoutMs = 1200) {
     return new Promise(resolve => {
@@ -2171,7 +2293,13 @@ function captureSatelliteImageWithHandle(order, folderHandle, callback) {
         return false;
     };
     try {
-        if (tryHtmlCapture()) return; // html2canvas started
+        // If the document is hidden (tab in background), html2canvas may capture blank/partial content.
+        // In that case prefer the Static Maps fetch so extraction can continue while the tab is not visible.
+        if (!document.hidden) {
+            if (tryHtmlCapture()) return; // html2canvas started
+        } else {
+            console.warn('Document hidden — skipping html2canvas and using Static Maps fallback for order', order.id);
+        }
     } catch(e) { console.warn('html2canvas primary capture failed, falling back to Static Maps', e); }
 
     // If polygon coordinates exist use path drawing (Static Maps fallback)
@@ -2188,6 +2316,14 @@ function captureSatelliteImageWithHandle(order, folderHandle, callback) {
         pathItems.push(`${simplifiedCoords[0].lat},${simplifiedCoords[0].lng}`);
         const pathParam = encodeURIComponent(pathItems.join('|'));
 
+        const keyForReq = getApiKeyForRequest();
+        if (!keyForReq) {
+            console.error('❌ مفتاح API غير صالح أو غير موجود - تخطي Static Maps للطلب:', order.id);
+            try { document.getElementById('apiStatus').className = 'api-status error'; document.getElementById('apiStatus').textContent = '❌ مفتاح API غير صالح. ارفع ملف المفتاح الصحيح.'; } catch(e){}
+            callback(false, null);
+            return;
+        }
+
         var staticMapUrl = `https://maps.googleapis.com/maps/api/staticmap?` +
             `center=${center.lat()},${center.lng()}` +
             `&zoom=${zoom}` +
@@ -2196,7 +2332,7 @@ function captureSatelliteImageWithHandle(order, folderHandle, callback) {
             `&maptype=satellite` +
             `&path=${pathParam}` +
             `&markers=color:0xff0000%7C${center.lat()},${center.lng()}` +
-            `&key=${currentApiKey}` +
+            `&key=${keyForReq}` +
             `&format=jpg` +
             `&timestamp=${Date.now()}`;
     }
@@ -2204,24 +2340,39 @@ function captureSatelliteImageWithHandle(order, folderHandle, callback) {
     else if (order.isElevation && order.point && order.point.lat && order.point.lng) {
         const centerLat = order.point.lat, centerLng = order.point.lng;
         const zoom = 20;
-        var staticMapUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${centerLat},${centerLng}&zoom=${zoom}&size=${width}x${height}&scale=2&maptype=satellite&markers=color:0xff0000%7C${centerLat},${centerLng}&key=${currentApiKey}&format=jpg&timestamp=${Date.now()}`;
+        const keyForReq2 = getApiKeyForRequest();
+        if (!keyForReq2) { console.error('❌ مفتاح API غير صالح - تخطي Static Maps للطلب:', order.id); try { document.getElementById('apiStatus').className = 'api-status error'; document.getElementById('apiStatus').textContent = '❌ مفتاح API غير صالح. ارفع ملف المفتاح الصحيح.'; } catch(e){} callback(false, null); return; }
+        var staticMapUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${centerLat},${centerLng}&zoom=${zoom}&size=${width}x${height}&scale=2&maptype=satellite&markers=color:0xff0000%7C${centerLat},${centerLng}&key=${keyForReq2}&format=jpg&timestamp=${Date.now()}`;
     } else {
         callback(false, null);
         return;
     }
 
-    fetch(staticMapUrl, { cache: 'no-store', mode: 'cors' })
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+    retryFetchBlob(staticMapUrl, { cache: 'no-store', mode: 'cors' }, 3, 700)
+        .then(async function(result) {
+            const blob = result.blob;
+            // validate blob
+            try {
+                if (!blob || !blob.size || blob.size < 512) {
+                    throw new Error('Static Maps returned empty or tiny blob');
+                }
+                const type = blob.type || '';
+                if (!type.startsWith('image') && blob.size < 2000) {
+                    throw new Error('Static Maps returned non-image or too-small blob');
+                }
+            } catch (vbErr) {
+                console.error('⚠️ فشل التحقق من Blob المستلم من Static Maps:', vbErr);
+                try {
+                    const arrBuf = await blob.arrayBuffer();
+                    const dbg = new Blob([arrBuf], { type: 'application/octet-stream' });
+                    const debugName = `${order.id}_staticmap_debug.bin`;
+                    try { await saveBlobToFile(debugName, dbg, folderHandle); } catch(e){ console.warn('فشل حفظ ملف debug:', e); }
+                } catch(e){}
+                throw vbErr;
             }
-            return response.blob();
-        })
-        .then(async function(blob) {
             try {
                 const fileName = `${order.id}.jpg`;
                 let base64data = null;
-                // Composite badge only for elevation points (do not write area on polygon images)
                 if (order.isElevation && order.elevation !== undefined && order.elevation !== null) {
                     try {
                         const text = `المنسوب = ${formatNumberValue(order.elevation)}`;
@@ -2248,13 +2399,26 @@ function captureSatelliteImageWithHandle(order, folderHandle, callback) {
                     callback(true, null);
                 }
             }
-        })
-        .catch(err => {
+        }).catch(err => {
             console.error('❌ فشل Static Maps API للطلب:', order.id, err);
-            // fallback: for polygons try html2canvas, for points try fallbackStaticMap
-            if (order.coords && order.coords.length >= 3) captureHtml2Canvas(order, folderHandle, callback);
-            else if (order.isElevation && order.point) fallbackStaticMap(order, folderHandle, callback);
-            else callback(false, null);
+            // If 403 while hidden, defer for retry when visible
+            if (err && err.status === 403 && document.hidden) {
+                try { deferredExtractionQueue.push({ order, folderHandle }); } catch(e){}
+                console.warn('⚠️ تم تأجيل الطلب بسبب 403 أثناء العمل في الخلفية:', order.id);
+                callback('deferred', null);
+                return;
+            }
+            // If the page is hidden, avoid html2canvas and always use fallbackStaticMap
+            if (document.hidden) {
+                if (order.isElevation && order.point) fallbackStaticMap(order, folderHandle, callback);
+                else if (order.coords && order.coords.length >= 3) fallbackStaticMap(order, folderHandle, callback);
+                else callback(false, null);
+            } else {
+                // when visible, try html2canvas for polygons, otherwise fallback
+                if (order.coords && order.coords.length >= 3) captureHtml2Canvas(order, folderHandle, callback);
+                else if (order.isElevation && order.point) fallbackStaticMap(order, folderHandle, callback);
+                else callback(false, null);
+            }
         });
 }
 
@@ -2262,6 +2426,13 @@ function captureSatelliteImageWithHandle(order, folderHandle, callback) {
 function captureHtml2CanvasPoint(order, folderHandle, callback) {
     if (shouldCancel) { callback(false, null); return; }
     if (!mapInitialized || !map) { callback(false, null); return; }
+    // If the tab is hidden, html2canvas will likely capture incomplete/blank tiles.
+    // Use Static Maps fallback in that case so extraction continues reliably in background.
+    if (document.hidden) {
+        console.warn('Tab hidden — using Static Maps fallback for point capture', order.id);
+        fallbackStaticMap(order, folderHandle, callback);
+        return;
+    }
     const prevCenter = map.getCenter ? map.getCenter() : null;
     const prevZoom = map.getZoom ? map.getZoom() : null;
     // hide other markers/polygons/boundaries so only the target point appears
@@ -2289,6 +2460,13 @@ function captureHtml2CanvasPoint(order, folderHandle, callback) {
     waitForMapReady(map).then(() => {
         setTimeout(async () => {
             if (shouldCancel) { try { marker.setMap(null); if (prevCenter) map.setCenter(prevCenter); if (prevZoom) map.setZoom(prevZoom); hiddenMarkers.forEach(m=>m.setMap(map)); hiddenPolygons.forEach(p=>p.setMap(map)); hiddenBoundaries.forEach(p=>p.setMap(map)); } catch(e){}; callback(false, null); return; }
+            // if tab became hidden while preparing capture, switch to Static Maps fallback
+            if (document.hidden) {
+                try { marker.setMap(null); if (prevCenter) map.setCenter(prevCenter); if (prevZoom) map.setZoom(prevZoom); hiddenMarkers.forEach(m=>m.setMap(map)); hiddenPolygons.forEach(p=>p.setMap(map)); hiddenBoundaries.forEach(p=>p.setMap(map)); } catch(e){}
+                console.warn('Tab hidden during point capture preparation — switching to Static Maps for', order.id);
+                fallbackStaticMap(order, folderHandle, callback);
+                return;
+            }
             const mapElement = document.getElementById('map');
             // ensure badge rendered and visible before capture
             try { await waitForBadgeRendered(1200); } catch(e){}
@@ -2326,6 +2504,13 @@ function captureHtml2CanvasPoint(order, folderHandle, callback) {
 function captureHtml2Canvas(order, folderHandle, callback) {
     if (shouldCancel) { callback(false, null); return; }
     if (!mapInitialized || !map) { callback(false, null); return; }
+
+    // If tab is hidden, avoid html2canvas (blank captures); use Static Maps fallback instead
+    if (document.hidden) {
+        console.warn('Tab hidden — using Static Maps fallback for polygon capture', order.id);
+        fallbackStaticMap(order, folderHandle, callback);
+        return;
+    }
 
     const previousPolygons = polygons.slice();
     previousPolygons.forEach(p => p.setMap(null));
@@ -2371,6 +2556,13 @@ function captureHtml2Canvas(order, folderHandle, callback) {
             try { await waitForBadgeRendered(1200); } catch(e) {}
             // give a short extra delay to allow overlays and tiles to settle
             await new Promise(r => setTimeout(r, 250));
+            // if the tab became hidden while preparing capture, switch to Static Maps fallback
+            if (document.hidden) {
+                try { previousPolygons.forEach(p => p.setMap(map)); tempPolygon.setMap(null); } catch(e){}
+                console.warn('Tab hidden during polygon capture preparation — switching to Static Maps for', order.id);
+                fallbackStaticMap(order, folderHandle, callback);
+                return;
+            }
 
             html2canvas(mapElement, {
                 useCORS: true,
@@ -2467,18 +2659,35 @@ function cropCanvasToContent(canvas) {
 function fallbackStaticMap(order, folderHandle, callback) {
     try {
         let staticMapUrl = null;
+        const keyForReq = getApiKeyForRequest();
+        if (!keyForReq) {
+            console.error('❌ مفتاح API غير صالح - تخطي Static Maps في fallbackStaticMap للطلب:', order.id);
+            try { document.getElementById('apiStatus').className = 'api-status error'; document.getElementById('apiStatus').textContent = '❌ مفتاح API غير صالح. ارفع ملف المفتاح الصحيح.'; } catch(e){}
+            callback(false, null);
+            return;
+        }
         if (order.coords && order.coords.length) {
             const bounds = new google.maps.LatLngBounds();
             order.coords.forEach(c => bounds.extend(new google.maps.LatLng(c.lat, c.lng)));
             const center = bounds.getCenter();
-            staticMapUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${center.lat()},${center.lng()}&zoom=19&size=600x400&maptype=satellite&key=${currentApiKey}&format=jpg`;
+            staticMapUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${center.lat()},${center.lng()}&zoom=19&size=600x400&maptype=satellite&key=${keyForReq}&format=jpg`;
         } else if (order.isElevation && order.point) {
             const centerLat = order.point.lat, centerLng = order.point.lng;
-            staticMapUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${centerLat},${centerLng}&zoom=20&size=600x400&maptype=satellite&key=${currentApiKey}&format=jpg`;
+            staticMapUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${centerLat},${centerLng}&zoom=20&size=600x400&maptype=satellite&key=${keyForReq}&format=jpg`;
         } else {
             callback(false, null); return;
         }
-        fetch(staticMapUrl).then(response => response.blob()).then(async function(blob) {
+        fetch(staticMapUrl).then(response => {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            return response.blob();
+        }).then(async function(blob) {
+            // validate blob before saving
+            if (!blob || !blob.size || blob.size < 512 || !(blob.type && blob.type.startsWith('image'))) {
+                console.error('⚠️ StaticMaps returned invalid blob for', order.id, 'size=', blob ? blob.size : 0, 'type=', blob ? blob.type : 'n/a');
+                // save debug copy
+                try { const debugName = `${order.id}_staticmap_error.txt`; const text = 'Static Maps fetch returned invalid image blob. Size=' + (blob?blob.size:0) + ' Type=' + (blob?blob.type:''); const dbgBlob = new Blob([text], { type: 'text/plain' }); await saveBlobToFile(debugName, dbgBlob, folderHandle); } catch(e){ console.warn('Failed saving debug text', e); }
+                callback(false, null); return;
+            }
             try {
                 const fileName = `${order.id}.jpg`;
                 if (folderHandle) {
@@ -2488,7 +2697,16 @@ function fallbackStaticMap(order, folderHandle, callback) {
                 reader.onloadend = function() { callback(true, reader.result); };
                 reader.readAsDataURL(blob);
             } catch(err) { saveAs(blob, `${order.id}.jpg`); callback(true, null); }
-        }).catch(() => callback(false, null));
+        }).catch(err => {
+            console.error('⚠️ fallbackStaticMap fetch error:', err);
+            if (err && err.status === 403 && document.hidden) {
+                try { deferredExtractionQueue.push({ order, folderHandle }); } catch(e){}
+                console.warn('⚠️ تم تأجيل الطلب في fallbackStaticMap بسبب 403 أثناء الخلفية:', order.id);
+                callback('deferred', null);
+                return;
+            }
+            callback(false, null);
+        });
     } catch(e) { callback(false, null); }
 }
 
@@ -2923,6 +3141,18 @@ window.addEventListener('visibilitychange', function() {
         google.maps.event.trigger(map, 'resize');
         if (orders && orders.length > 0) renderMap();
         needsMapRefresh = false;
+    }
+    // When returning to visible, if there are deferred orders do NOT auto-resume.
+    // Show the progress modal and instruct user to manually resume.
+    if (!document.hidden && deferredExtractionQueue && deferredExtractionQueue.length > 0) {
+        try {
+            if (!isExtracting) {
+                document.getElementById('progressModal').style.display = 'flex';
+                document.getElementById('progressStatus').textContent = `⏸️ الاستخراج مؤجل ${deferredExtractionQueue.length} طلب — اضغط 'إعادة المحاولة للطلبات المؤجلة' للمتابعة`;
+                document.getElementById('progressDetails').textContent = 'العملية متوقفة مؤقتًا أثناء عدم التواجد في التبويب.';
+                stopExtractionFocusGuard();
+            }
+        } catch(e) { console.warn('فشل عرض حالة التأجيل عند العودة:', e); }
     }
 });
 window.initMap = initMap;
