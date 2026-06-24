@@ -2944,11 +2944,23 @@ function hResetEmployeeFilters(){['hEmpSearchInput','hEmpFilterCenter','hEmpFilt
 
 async function hEditEmp(nid){
   const e=hAllEmployeesMaster.find(e=>String(e.nationalId)===String(nid));if(!e){hToast('الموظف غير موجود','error');return;}
-  document.getElementById('hEmpName').value=e.name||'';document.getElementById('hEmpNid').value=String(e.nationalId);document.getElementById('hEmpJob').value=e.job||'';document.getElementById('hEmpCenter').value=e.center||'';document.getElementById('hEmpType').value=e.type||'بنية معلوماتية';document.getElementById('hEditEmpId').value=String(e.nationalId);
+  document.getElementById('hEmpName').value=e.name||'';
+  document.getElementById('hEmpNid').value=String(e.nationalId);
+  document.getElementById('hEmpJob').value=e.job||'';
+  document.getElementById('hEmpCenter').value=e.center||'';
+  document.getElementById('hEmpType').value=e.type||'بنية معلوماتية';
+  document.getElementById('hEditEmpId').value=String(e.nationalId);
   const isInactive=e.status==='inactive'||e.status==='غير نشط';
   document.querySelectorAll('input[name="hEmpStatus"]').forEach(radio=>{radio.checked=(radio.value==='active'&&!isInactive)||(radio.value==='inactive'&&isInactive);});
-  const nidInput=document.getElementById('hEmpNid');if(nidInput){nidInput.readOnly=true;nidInput.style.background='#f0f0f0';nidInput.style.color='#888';}
-  document.getElementById('hAddEmpTitle').textContent='✏️ تعديل بيانات موظف';hOpenModal('hAddEmpModal');
+  // جعل حقل الرقم القومي قابل للتعديل
+  const nidInput=document.getElementById('hEmpNid');
+  if(nidInput){
+    nidInput.readOnly=false;
+    nidInput.style.background='';
+    nidInput.style.color='';
+  }
+  document.getElementById('hAddEmpTitle').textContent='✏️ تعديل بيانات موظف';
+  hOpenModal('hAddEmpModal');
 }
 
 async function hDelEmp(nid){
@@ -2963,14 +2975,56 @@ async function hDelEmp(nid){
 }
 
 async function hSubmitAddEmp(){
-  const name=document.getElementById('hEmpName').value.trim();const nid=document.getElementById('hEmpNid').value.trim();const job=document.getElementById('hEmpJob').value.trim();const center=document.getElementById('hEmpCenter').value;const type=document.getElementById('hEmpType').value;const editId=document.getElementById('hEditEmpId').value.trim();const statusRadio=document.querySelector('input[name="hEmpStatus"]:checked');const statusAr=statusRadio?.value==='active'?'نشط':'غير نشط';
-  if(!name||!nid||!job||!center)return hToast('يرجى ملء جميع الحقول','warning');if(nid.length!==14||isNaN(nid))return hToast('الرقم القومي 14 رقم','warning');
-  hShowLoading();let r;
-  if(editId){r=await hApiCall('updateEmployee',{nationalId:editId,name,job,center,type,status:statusAr});}
-  else{const exists=hAllEmployeesMaster.find(e=>String(e.nationalId)===String(nid));if(exists){hHideLoading();hToast('⚠️ الرقم القومي مسجل مسبقاً','error');return;}r=await hApiCall('addEmployee',{name,nationalId:nid,job,center,type,status:statusAr});}
+  const name = document.getElementById('hEmpName').value.trim();
+  const nid = document.getElementById('hEmpNid').value.trim();
+  const job = document.getElementById('hEmpJob').value.trim();
+  const center = document.getElementById('hEmpCenter').value;
+  const type = document.getElementById('hEmpType').value;
+  const editId = document.getElementById('hEditEmpId').value.trim();
+  const statusRadio = document.querySelector('input[name="hEmpStatus"]:checked');
+  const statusAr = statusRadio?.value === 'active' ? 'نشط' : 'غير نشط';
+
+  if(!name || !nid || !job || !center) return hToast('يرجى ملء جميع الحقول', 'warning');
+  if(nid.length !== 14 || isNaN(nid)) return hToast('الرقم القومي 14 رقم', 'warning');
+
+  hShowLoading();
+  let r;
+  if(editId){
+    // تعديل: إرسال الرقم القديم والجديد معًا
+    const oldNid = editId;
+    const newNid = nid;
+    const payload = {
+      oldNationalId: oldNid,
+      name,
+      job,
+      center,
+      type,
+      status: statusAr
+    };
+    // إذا تغير الرقم القومي، أضف الحقل الجديد
+    if (newNid !== oldNid) {
+      payload.newNationalId = newNid;
+    }
+    r = await hApiCall('updateEmployee', payload);
+  } else {
+    // إضافة موظف جديد
+    const exists = hAllEmployeesMaster.find(e => String(e.nationalId) === String(nid));
+    if(exists) {
+      hHideLoading();
+      return hToast('⚠️ الرقم القومي مسجل مسبقاً', 'error');
+    }
+    r = await hApiCall('addEmployee', { name, nationalId: nid, job, center, type, status: statusAr });
+  }
+
   hHideLoading();
-  if(r.success){hCloseModal('hAddEmpModal');hToast(editId?'✅ تم التعديل':'✅ تمت الإضافة','success');await hLoadAllEmps(true);if(currentUser&&currentUser.role==='center')await hLoadCenterData();}
-  else hToast(r.message||'خطأ في الحفظ','error');
+  if(r.success){
+    hCloseModal('hAddEmpModal');
+    hToast(editId ? '✅ تم التعديل' : '✅ تمت الإضافة', 'success');
+    await hLoadAllEmps();
+    if(currentUser && currentUser.role === 'center') await hLoadCenterData();
+  } else {
+    hToast(r.message || 'خطأ في الحفظ', 'error');
+  }
 }
 
 function hOpenAddEmpModal(type){
@@ -3025,23 +3079,63 @@ async function hConfirmTransfer(){
 // بحث الحافز
 // 
 async function hDoSearch(){
-  const name=document.getElementById('hSearchName').value.trim();const nid=document.getElementById('hSearchNid').value.trim();
-  if(!name&&!nid){hToast('يرجى إدخال اسم أو رقم قومي','warning');return;}
-  const loadingDiv=document.getElementById('hSearchLoading');const resultsDiv=document.getElementById('hSearchResults');const searchHead=document.getElementById('hSearchHead');const searchBody=document.getElementById('hSearchBody');
-  if(loadingDiv)loadingDiv.style.display='block';if(resultsDiv)resultsDiv.style.display='none';
-  try{
-    const params={};if(name)params.name=name;if(nid)params.nationalId=nid;
-    const result=await hApiCall('searchEmployee',params);
-    if(loadingDiv)loadingDiv.style.display='none';
-    if(!result.success||!result.results||!result.results.length){hToast('لا توجد نتائج مطابقة','info');if(resultsDiv)resultsDiv.style.display='none';return;}
-    hSearchData=result.results;
-    const headers=['#','الشهر','المركز','النوع','الاسم','الرقم القومي','الوظيفة','المبلغ','الحالة'];
-    if(searchHead)searchHead.innerHTML=`<tr>${headers.map(h=>`<th>${escapeHtml(h)}</th>`).join('')}</tr>`;
-    if(searchBody)searchBody.innerHTML=hSearchData.map((item,idx)=>`<tr><td>${idx+1}</td><td>${hFmtMonth(item.month)||escapeHtml(item.month)||'—'}</td><td>${escapeHtml(item.center||'—')}</td><td>${escapeHtml(item.type||'—')}</td><td style="text-align:right;font-weight:600">${escapeHtml(item.name||'—')}</td><td style="font-family:monospace;direction:ltr">${escapeHtml(item.nationalId||'—')}</td><td>${escapeHtml(item.job||'—')}</td><td style="font-weight:700;color:var(--primary)">${hFmtN(item.amount)} ج.م</td><td><span class="h-badge h-badge-${hBadgeCls(item.status)}">${escapeHtml(item.status||'—')}</span></td></tr>`).join('');
-    if(resultsDiv)resultsDiv.style.display='block';hToast(`✅ ${hSearchData.length} نتيجة`,'success');
-  }catch(e){if(loadingDiv)loadingDiv.style.display='none';hToast('خطأ أثناء البحث','error');}
-}
+  const name = document.getElementById('hSearchName').value.trim();
+  const nid = document.getElementById('hSearchNid').value.trim();
+  if(!name && !nid){
+    hToast('يرجى إدخال اسم أو رقم قومي', 'warning');
+    return;
+  }
+  const loadingDiv = document.getElementById('hSearchLoading');
+  const resultsDiv = document.getElementById('hSearchResults');
+  const searchHead = document.getElementById('hSearchHead');
+  const searchBody = document.getElementById('hSearchBody');
+  if(loadingDiv) loadingDiv.style.display = 'block';
+  if(resultsDiv) resultsDiv.style.display = 'none';
 
+  try{
+    const params = {};
+    if(name) params.name = name;
+    if(nid) params.nationalId = nid;
+    const result = await hApiCall('searchEmployee', params);
+    if(loadingDiv) loadingDiv.style.display = 'none';
+
+    if(!result.success || !result.results || !result.results.length){
+      hToast('لا توجد نتائج مطابقة', 'info');
+      if(resultsDiv) resultsDiv.style.display = 'none';
+      return;
+    }
+
+    // 🔽 ترتيب النتائج حسب الشهر من الأحدث إلى الأقدم
+    result.results.sort((a, b) => (b.month || '').localeCompare(a.month || ''));
+
+    hSearchData = result.results;
+    const headers = ['#', 'الشهر', 'المركز', 'النوع', 'الاسم', 'الرقم القومي', 'الوظيفة', 'المبلغ', 'الحالة'];
+    if(searchHead){
+      searchHead.innerHTML = `<tr>${headers.map(h => `<th>${escapeHtml(h)}</th>`).join('')}</tr>`;
+    }
+    if(searchBody){
+      searchBody.innerHTML = hSearchData.map((item, idx) =>
+        `<tr>
+          <td>${idx+1}</td>
+          <td>${hFmtMonth(item.month) || escapeHtml(item.month) || '—'}</td>
+          <td>${escapeHtml(item.center || '—')}</td>
+          <td>${escapeHtml(item.type || '—')}</td>
+          <td style="text-align:right;font-weight:600">${escapeHtml(item.name || '—')}</td>
+          <td style="font-family:monospace;direction:ltr">${escapeHtml(item.nationalId || '—')}</td>
+          <td>${escapeHtml(item.job || '—')}</td>
+          <td style="font-weight:700;color:var(--primary)">${hFmtN(item.amount)} ج.م</td>
+          <td><span class="h-badge h-badge-${hBadgeCls(item.status)}">${escapeHtml(item.status || '—')}</span></td>
+        </tr>`
+      ).join('');
+    }
+    if(resultsDiv) resultsDiv.style.display = 'block';
+    hToast(`✅ ${hSearchData.length} نتيجة`, 'success');
+
+  } catch(e){
+    if(loadingDiv) loadingDiv.style.display = 'none';
+    hToast('خطأ أثناء البحث', 'error');
+  }
+}
 function hPrintSearchResults(){
   if(!hSearchData||!hSearchData.length){hToast('لا توجد نتائج','warning');return;}
   const today=new Date().toLocaleDateString('ar-EG');const searchName=document.getElementById('hSearchName').value.trim();const searchNid=document.getElementById('hSearchNid').value.trim();
